@@ -8,14 +8,19 @@
 
 ```
 weoa-cli
-├── auth login      扫码登录，保存会话
-├── whoami          查看公众号详细信息
+├── auth
+│   ├── login        扫码登录，保存会话
+│   ├── logout       登出，清除会话
+│   └── status       查看登录状态
+├── whoami           查看公众号详细信息
 └── publish
-    ├── list        列出已发表文章
-    └── sync        增量同步文章到本地数据库
+    ├── list         列出已发表文章
+    └── sync         增量同步文章到本地数据库
 ```
 
 - **auth login** — 启动浏览器打开 mp.weixin.qq.com，扫码登录后自动保存 Cookie + Token
+- **auth logout** — 清除本地保存的登录会话
+- **auth status** — 检查当前是否已登录，显示账号名和微信号
 - **whoami** — 展示公众号名称、微信号、简介、邮箱、粉丝数、分类、所在地、视频号、管理员等信息
 - **publish list** — 从微信后台接口获取已发表文章，支持 `--all` 遍历全部、`--json` 输出、`--from-db` 本地查询
 - **publish sync** — 增量同步文章索引到本地 SQLite，自动去重，重复运行只拉取新文章
@@ -35,6 +40,12 @@ go build -o weoa-cli .
 ```bash
 # 登录（打开浏览器，用微信扫码）
 weoa-cli auth login
+
+# 查看登录状态
+weoa-cli auth status
+
+# 登出
+weoa-cli auth logout
 
 # 查看账号信息
 weoa-cli whoami

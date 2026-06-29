@@ -1,0 +1,150 @@
+package storage
+
+import (
+	"database/sql"
+	"fmt"
+	"time"
+
+	_ "modernc.org/sqlite"
+
+	"github.com/mudongliang/weoa-cli/internal/config"
+	"github.com/mudongliang/weoa-cli/internal/publish"
+)
+
+// Store wraps the SQLite database for article storage.
+type Store struct {
+	db *sql.DB
+}
+
+// New opens (or creates) the SQLite database and ensures the schema exists.
+func New() (*Store, error) {
+	if err := config.EnsureDir(); err != nil {
+		return nil, fmt.Errorf("ensure config dir: %w", err)
+	}
+
+	db, err := sql.Open("sqlite", config.DBFile())
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("ping database: %w", err)
+	}
+
+	if err := migrate(db); err != nil {
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
+
+	return &Store{db: db}, nil
+}
+
+// Close closes the database connection.
+func (s *Store) Close() error {
+	return s.db.Close()
+}
+
+// InsertArticle inserts an article if it doesn't already exist (by appmsgid).
+// Returns true if the article was newly inserted.
+func (s *Store) InsertArticle(a publish.Article) (bool, error) {
+	result, err := s.db.Exec(
+		`INSERT OR IGNORE INTO articles (appmsgid, publish_id, title, url, publish_time, cover, digest, read_num, like_num, is_deleted, synced_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.AppMsgID, a.PublishID, a.Title, a.URL, a.PublishTime, a.Cover, a.Digest, a.ReadNum, a.LikeNum, a.IsDeleted, time.Now().Unix(),
+	)
+	if err != nil {
+		return false, fmt.Errorf("insert article: %w", err)
+	}
+
+	n, _ := result.RowsAffected()
+	return n > 0, nil
+}
+
+// HasAppMsgID returns true if the appmsgid is already in the database.
+func (s *Store) HasAppMsgID(appMsgID int64) (bool, error) {
+	var exists bool
+	err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM articles WHERE appmsgid = ?)", appMsgID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check appmsgid: %w", err)
+	}
+	return exists, nil
+}
+
+// ArticleCount returns the total number of articles in the database.
+func (s *Store) ArticleCount() (int, error) {
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM articles").Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count articles: %w", err)
+	}
+	return count, nil
+}
+
+// ListArticles returns articles ordered by publish_time descending.
+// If limit <= 0, returns all articles without limit.
+func (s *Store) ListArticles(limit int) ([]publish.Article, error) {
+	var rows *sql.Rows
+	var err error
+	if limit > 0 {
+		rows, err = s.db.Query(
+			`SELECT appmsgid, publish_id, title, url, publish_time, cover, digest, read_num, like_num, is_deleted
+			 FROM articles ORDER BY publish_time DESC LIMIT ?`, limit,
+		)
+	} else {
+		rows, err = s.db.Query(
+			`SELECT appmsgid, publish_id, title, url, publish_time, cover, digest, read_num, like_num, is_deleted
+			 FROM articles ORDER BY publish_time DESC`,
+		)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query articles: %w", err)
+	}
+	defer rows.Close()
+
+	var articles []publish.Article
+	for rows.Next() {
+		var a publish.Article
+		var cover, digest sql.NullString
+		var readNum, likeNum sql.NullInt64
+		if err := rows.Scan(&a.AppMsgID, &a.PublishID, &a.Title, &a.URL, &a.PublishTime,
+			&cover, &digest, &readNum, &likeNum, &a.IsDeleted); err != nil {
+			return nil, fmt.Errorf("scan article: %w", err)
+		}
+		if cover.Valid {
+			a.Cover = cover.String
+		}
+		if digest.Valid {
+			a.Digest = digest.String
+		}
+		if readNum.Valid {
+			a.ReadNum = int(readNum.Int64)
+		}
+		if likeNum.Valid {
+			a.LikeNum = int(likeNum.Int64)
+		}
+		articles = append(articles, a)
+	}
+
+	return articles, rows.Err()
+}
+
+func migrate(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS articles (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			appmsgid INTEGER NOT NULL,
+			publish_id INTEGER NOT NULL,
+			title TEXT NOT NULL,
+			url TEXT NOT NULL,
+			publish_time INTEGER NOT NULL,
+			cover TEXT,
+			digest TEXT,
+			read_num INTEGER DEFAULT 0,
+			like_num INTEGER DEFAULT 0,
+			is_deleted INTEGER DEFAULT 0,
+			synced_at INTEGER NOT NULL,
+			UNIQUE(appmsgid)
+		);
+		CREATE INDEX IF NOT EXISTS idx_articles_publish_time ON articles(publish_time DESC);
+	`)
+	return err
+}

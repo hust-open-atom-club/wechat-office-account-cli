@@ -30,13 +30,11 @@ func init() {
 	rootCmd.SetOut(os.Stdout)
 	rootCmd.SetErr(os.Stderr)
 
-	// Register subcommands
 	rootCmd.AddCommand(authCmd())
 	rootCmd.AddCommand(whoamiCmd)
 	rootCmd.AddCommand(publishCmd())
 }
 
-// authCmd creates the "auth" parent command.
 func authCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "auth",
@@ -44,10 +42,11 @@ func authCmd() *cobra.Command {
 		Long:  `Manage login sessions for the WeChat Official Account backend.`,
 	}
 	cmd.AddCommand(authcmd.NewLoginCmd())
+	cmd.AddCommand(authcmd.NewLogoutCmd())
+	cmd.AddCommand(authcmd.NewStatusCmd())
 	return cmd
 }
 
-// publishCmd creates the "publish" parent command.
 func publishCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "publish",
@@ -59,7 +58,6 @@ func publishCmd() *cobra.Command {
 	return cmd
 }
 
-// fatalf prints an error message and exits with code 1.
 func fatalf(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, "Error: "+format+"\n", args...)
 	os.Exit(1)

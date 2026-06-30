@@ -68,16 +68,6 @@ func runWhoami(cmd *cobra.Command, args []string) error {
 		sb.WriteString(fmt.Sprintf("  状态:     %s\n", strings.Join(statuses, ", ")))
 	}
 
-	// Token (masked)
-	sb.WriteString(fmt.Sprintf("  Token:    %s...\n", maskToken(info.Token)))
-
 	fmt.Print(sb.String())
 	return nil
-}
-
-func maskToken(token string) string {
-	if len(token) <= 8 {
-		return "****"
-	}
-	return token[:4] + "****" + token[len(token)-4:]
 }

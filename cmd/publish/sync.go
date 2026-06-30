@@ -10,6 +10,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type syncStore interface {
+	HasAppMsgID(appMsgID int64) (bool, error)
+	InsertArticle(a publish.Article) (bool, error)
+}
+
 // NewSyncCmd creates the "publish sync" subcommand.
 func NewSyncCmd() *cobra.Command {
 	return &cobra.Command{
@@ -47,30 +52,14 @@ func runSync(cmd *cobra.Command, args []string) error {
 	newCount := 0
 	var syncErr error
 	_, err = svc.ListAll(func(articles []publish.Article) bool {
-		seenExisting := false
-		for _, a := range articles {
-			exists, checkErr := store.HasAppMsgID(a.AppMsgID)
-			if checkErr != nil {
-				syncErr = fmt.Errorf("check article %d: %w", a.AppMsgID, checkErr)
-				return true
-			}
-			if exists {
-				seenExisting = true
-				continue
-			}
-
-			inserted, insertErr := store.InsertArticle(a)
-			if insertErr != nil {
-				syncErr = fmt.Errorf("insert article %d: %w", a.AppMsgID, insertErr)
-				return true
-			}
-			if inserted {
-				newCount++
-				fmt.Printf("+ %s\n", a.Title)
-			}
+		stop, pageErr := syncArticlePage(store, articles, func(a publish.Article) {
+			newCount++
+			fmt.Printf("+ %s\n", a.Title)
+		})
+		if pageErr != nil {
+			syncErr = pageErr
 		}
-		// Stop before the next page, but only after this page has been fully processed.
-		return seenExisting
+		return stop
 	})
 	if err != nil {
 		return fmt.Errorf("sync: %w", err)
@@ -92,4 +81,30 @@ func runSync(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func syncArticlePage(store syncStore, articles []publish.Article, onInsert func(publish.Article)) (bool, error) {
+	seenExisting := false
+	for _, a := range articles {
+		exists, checkErr := store.HasAppMsgID(a.AppMsgID)
+		if checkErr != nil {
+			return true, fmt.Errorf("check article %d: %w", a.AppMsgID, checkErr)
+		}
+		if exists {
+			seenExisting = true
+			continue
+		}
+
+		inserted, insertErr := store.InsertArticle(a)
+		if insertErr != nil {
+			return true, fmt.Errorf("insert article %d: %w", a.AppMsgID, insertErr)
+		}
+		if inserted {
+			if onInsert != nil {
+				onInsert(a)
+			}
+		}
+	}
+	// Stop before the next page, but only after this page has been fully processed.
+	return seenExisting, nil
 }

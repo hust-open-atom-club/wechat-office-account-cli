@@ -120,7 +120,7 @@ func TestSyncArticlePageDoesNotStopForArticleInsertedEarlierThisRun(t *testing.T
 	}
 }
 
-func TestSyncArticlePageSkipsDeletedArticles(t *testing.T) {
+func TestSyncArticlePageChecksDeletedArticlesButDoesNotStoreThem(t *testing.T) {
 	store := &fakeSyncStore{
 		existing: map[int64]bool{100: true},
 	}
@@ -134,11 +134,11 @@ func TestSyncArticlePageSkipsDeletedArticles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("syncArticlePage returned error: %v", err)
 	}
-	if stop {
-		t.Fatal("deleted articles should not trigger pagination stop")
+	if !stop {
+		t.Fatal("deleted existing article should still trigger pagination stop")
 	}
-	if len(store.checked) != 1 || store.checked[0] != 98 {
-		t.Fatalf("checked IDs = %v, want [98]", store.checked)
+	if len(store.checked) != 3 || store.checked[0] != 100 || store.checked[1] != 99 || store.checked[2] != 98 {
+		t.Fatalf("checked IDs = %v, want [100 99 98]", store.checked)
 	}
 	if len(store.inserted) != 1 || store.inserted[0] != 98 {
 		t.Fatalf("inserted IDs = %v, want [98]", store.inserted)
@@ -157,5 +157,17 @@ func TestShouldStopSync(t *testing.T) {
 	}
 	if shouldStopSync(false, false) {
 		t.Fatal("incremental sync should continue when no existing article was seen")
+	}
+}
+
+func TestCountDeletedArticles(t *testing.T) {
+	articles := []internalpublish.Article{
+		{AppMsgID: 1},
+		{AppMsgID: 2, IsDeleted: true},
+		{AppMsgID: 3, IsDeleted: true},
+	}
+
+	if got := countDeletedArticles(articles); got != 2 {
+		t.Fatalf("countDeletedArticles = %d, want 2", got)
 	}
 }

@@ -11,7 +11,7 @@ import (
 // buildAPIResponse builds a realistic appmsgpublish response with proper JSON encoding.
 func buildAPIResponse(records []publishRecord, totalCount int) string {
 	page := publishPage{
-		TotalCount: totalCount,
+		TotalCount:  totalCount,
 		PublishList: records,
 	}
 	pageBytes, _ := json.Marshal(page)

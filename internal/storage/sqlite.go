@@ -79,20 +79,52 @@ func (s *Store) ArticleCount() (int, error) {
 	return count, nil
 }
 
-// ListArticles returns articles ordered by publish_time descending.
+// ActiveArticleCount returns the number of non-deleted articles in the database.
+func (s *Store) ActiveArticleCount() (int, error) {
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM articles WHERE is_deleted = 0").Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count active articles: %w", err)
+	}
+	return count, nil
+}
+
+// ListArticles returns articles ordered by appmsgid descending.
 // If limit <= 0, returns all articles without limit.
 func (s *Store) ListArticles(limit int) ([]publish.Article, error) {
+	return s.listArticles(limit, false)
+}
+
+// ListActiveArticles returns non-deleted articles ordered by appmsgid descending.
+// If limit <= 0, returns all active articles without limit.
+func (s *Store) ListActiveArticles(limit int) ([]publish.Article, error) {
+	return s.listArticles(limit, true)
+}
+
+func (s *Store) listArticles(limit int, activeOnly bool) ([]publish.Article, error) {
 	var rows *sql.Rows
 	var err error
-	if limit > 0 {
+
+	switch {
+	case activeOnly && limit > 0:
 		rows, err = s.db.Query(
 			`SELECT appmsgid, publish_id, title, url, publish_time, cover, digest, read_num, like_num, is_deleted
-			 FROM articles ORDER BY publish_time DESC LIMIT ?`, limit,
+			 FROM articles WHERE is_deleted = 0 ORDER BY appmsgid DESC LIMIT ?`, limit,
 		)
-	} else {
+	case activeOnly:
 		rows, err = s.db.Query(
 			`SELECT appmsgid, publish_id, title, url, publish_time, cover, digest, read_num, like_num, is_deleted
-			 FROM articles ORDER BY publish_time DESC`,
+			 FROM articles WHERE is_deleted = 0 ORDER BY appmsgid DESC`,
+		)
+	case limit > 0:
+		rows, err = s.db.Query(
+			`SELECT appmsgid, publish_id, title, url, publish_time, cover, digest, read_num, like_num, is_deleted
+			 FROM articles ORDER BY appmsgid DESC LIMIT ?`, limit,
+		)
+	default:
+		rows, err = s.db.Query(
+			`SELECT appmsgid, publish_id, title, url, publish_time, cover, digest, read_num, like_num, is_deleted
+			 FROM articles ORDER BY appmsgid DESC`,
 		)
 	}
 	if err != nil {
@@ -144,7 +176,7 @@ func migrate(db *sql.DB) error {
 			synced_at INTEGER NOT NULL,
 			UNIQUE(appmsgid)
 		);
-		CREATE INDEX IF NOT EXISTS idx_articles_publish_time ON articles(publish_time DESC);
+		CREATE INDEX IF NOT EXISTS idx_articles_appmsgid ON articles(appmsgid DESC);
 	`)
 	return err
 }

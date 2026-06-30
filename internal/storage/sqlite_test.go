@@ -121,9 +121,9 @@ func TestStore_ListArticles(t *testing.T) {
 
 	baseTime := time.Now().Unix()
 	articles := []publish.Article{
-		{AppMsgID: 1, PublishID: 10, Title: "Oldest", URL: "url1", PublishTime: baseTime - 200, ReadNum: 1},
-		{AppMsgID: 2, PublishID: 20, Title: "Middle", URL: "url2", PublishTime: baseTime - 100, ReadNum: 2},
-		{AppMsgID: 3, PublishID: 30, Title: "Newest", URL: "url3", PublishTime: baseTime, ReadNum: 3},
+		{AppMsgID: 1, PublishID: 10, Title: "Lowest ID", URL: "url1", PublishTime: baseTime, ReadNum: 1},
+		{AppMsgID: 2, PublishID: 20, Title: "Middle ID", URL: "url2", PublishTime: baseTime - 100, ReadNum: 2},
+		{AppMsgID: 3, PublishID: 30, Title: "Highest ID", URL: "url3", PublishTime: baseTime - 200, ReadNum: 3},
 	}
 	for _, a := range articles {
 		store.InsertArticle(a)
@@ -137,12 +137,12 @@ func TestStore_ListArticles(t *testing.T) {
 		t.Fatalf("len(result) = %d, want 2", len(result))
 	}
 
-	// DESC order: newest first
-	if result[0].Title != "Newest" {
-		t.Errorf("result[0] = %q, want 'Newest'", result[0].Title)
+	// DESC order: highest appmsgid first, independent of publish_time.
+	if result[0].Title != "Highest ID" {
+		t.Errorf("result[0] = %q, want 'Highest ID'", result[0].Title)
 	}
-	if result[1].Title != "Middle" {
-		t.Errorf("result[1] = %q, want 'Middle'", result[1].Title)
+	if result[1].Title != "Middle ID" {
+		t.Errorf("result[1] = %q, want 'Middle ID'", result[1].Title)
 	}
 }
 
@@ -252,5 +252,40 @@ func TestStore_DeletedArticle(t *testing.T) {
 	}
 	if !result[0].IsDeleted {
 		t.Error("IsDeleted should be true")
+	}
+}
+
+func TestStore_ListActiveArticlesSkipsDeleted(t *testing.T) {
+	store := testStore(t)
+
+	baseTime := time.Now().Unix()
+	articles := []publish.Article{
+		{AppMsgID: 1, PublishID: 10, Title: "Deleted Newest", URL: "url1", PublishTime: baseTime, IsDeleted: true},
+		{AppMsgID: 2, PublishID: 20, Title: "Active Lower ID", URL: "url2", PublishTime: baseTime - 100},
+		{AppMsgID: 3, PublishID: 30, Title: "Active Higher ID", URL: "url3", PublishTime: baseTime - 200},
+	}
+	for _, a := range articles {
+		if _, err := store.InsertArticle(a); err != nil {
+			t.Fatalf("InsertArticle: %v", err)
+		}
+	}
+
+	result, err := store.ListActiveArticles(2)
+	if err != nil {
+		t.Fatalf("ListActiveArticles: %v", err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("len(result) = %d, want 2", len(result))
+	}
+	if result[0].Title != "Active Higher ID" || result[1].Title != "Active Lower ID" {
+		t.Fatalf("active article order = [%q, %q], want [Active Higher ID, Active Lower ID]", result[0].Title, result[1].Title)
+	}
+
+	count, err := store.ActiveArticleCount()
+	if err != nil {
+		t.Fatalf("ActiveArticleCount: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("ActiveArticleCount = %d, want 2", count)
 	}
 }

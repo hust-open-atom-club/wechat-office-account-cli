@@ -45,9 +45,9 @@ func runSync(cmd *cobra.Command, args []string) error {
 	}
 	defer store.Close()
 
-	initialCount, err := store.ArticleCount()
+	initialCount, err := store.ActiveArticleCount()
 	if err != nil {
-		return fmt.Errorf("count existing articles: %w", err)
+		return fmt.Errorf("count existing active articles: %w", err)
 	}
 	fullSync := initialCount == 0
 
@@ -56,9 +56,14 @@ func runSync(cmd *cobra.Command, args []string) error {
 	fmt.Println("Syncing...")
 
 	newCount := 0
+	detectedCount := 0
+	deletedCount := 0
 	var syncErr error
 	seenThisRun := make(map[int64]bool)
 	_, err = svc.ListAll(func(articles []publish.Article) bool {
+		detectedCount += len(articles)
+		deletedCount += countDeletedArticles(articles)
+
 		stop, pageErr := syncArticlePage(store, articles, seenThisRun, func(a publish.Article) {
 			newCount++
 			fmt.Printf("+ %s\n", a.Title)
@@ -77,15 +82,12 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	fmt.Println()
 
-	total, err := store.ArticleCount()
+	total, err := store.ActiveArticleCount()
 	if err != nil {
-		return fmt.Errorf("count articles: %w", err)
+		return fmt.Errorf("count active articles: %w", err)
 	}
-	if newCount > 0 {
-		fmt.Printf("Done. %d new articles synced (total: %d).\n", newCount, total)
-	} else {
-		fmt.Printf("No new articles. (%d articles in database)\n", total)
-	}
+	fmt.Printf("Done. Detected %d published records, %d deleted, %d new articles synced (total: %d).\n",
+		detectedCount, deletedCount, newCount, total)
 
 	return nil
 }
@@ -94,13 +96,19 @@ func shouldStopSync(fullSync, pageStop bool) bool {
 	return !fullSync && pageStop
 }
 
+func countDeletedArticles(articles []publish.Article) int {
+	count := 0
+	for _, a := range articles {
+		if a.IsDeleted {
+			count++
+		}
+	}
+	return count
+}
+
 func syncArticlePage(store syncStore, articles []publish.Article, seenThisRun map[int64]bool, onInsert func(publish.Article)) (bool, error) {
 	seenExisting := false
 	for _, a := range articles {
-		if a.IsDeleted {
-			continue
-		}
-
 		exists, checkErr := store.HasAppMsgID(a.AppMsgID)
 		if checkErr != nil {
 			return true, fmt.Errorf("check article %d: %w", a.AppMsgID, checkErr)
@@ -109,6 +117,10 @@ func syncArticlePage(store syncStore, articles []publish.Article, seenThisRun ma
 			if seenThisRun == nil || !seenThisRun[a.AppMsgID] {
 				seenExisting = true
 			}
+			continue
+		}
+
+		if a.IsDeleted {
 			continue
 		}
 

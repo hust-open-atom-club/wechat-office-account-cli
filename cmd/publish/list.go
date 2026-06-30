@@ -14,10 +14,10 @@ import (
 )
 
 var (
-	listLimit int
-	listJSON  bool
-	listAll   bool
-	listFromDB bool
+	listLimit  int
+	listJSON   bool
+	listAll    bool
+	listRemote bool
 )
 
 // NewListCmd creates the "publish list" subcommand.
@@ -27,24 +27,24 @@ func NewListCmd() *cobra.Command {
 		Short: "List published articles",
 		Long: `Fetches and displays published articles.
 
-By default, shows the most recent page from the WeChat backend.
-Use --all to fetch everything, or --from-db to list from the local database.`,
+By default, reads from the local database.
+Use --remote to fetch from the WeChat backend.`,
 		RunE: runList,
 	}
 
-	cmd.Flags().IntVarP(&listLimit, "limit", "n", 20, "Number of articles per page (default 20)")
+	cmd.Flags().IntVarP(&listLimit, "limit", "n", 20, "Number of articles to show")
 	cmd.Flags().BoolVar(&listJSON, "json", false, "Output in JSON format")
-	cmd.Flags().BoolVarP(&listAll, "all", "a", false, "Fetch and show all published articles")
-	cmd.Flags().BoolVar(&listFromDB, "from-db", false, "List articles from local database (run sync first)")
+	cmd.Flags().BoolVarP(&listAll, "all", "a", false, "Show all published articles")
+	cmd.Flags().BoolVar(&listRemote, "remote", false, "Fetch articles from the WeChat backend")
 
 	return cmd
 }
 
 func runList(cmd *cobra.Command, args []string) error {
-	if listFromDB {
-		return listFromDatabase()
+	if listRemote {
+		return listFromAPI()
 	}
-	return listFromAPI()
+	return listFromDatabase()
 }
 
 func listFromAPI() error {
@@ -69,15 +69,14 @@ func listFromAPI() error {
 	if err != nil {
 		return fmt.Errorf("list articles: %w", err)
 	}
+	articles := filterDeletedArticles(result.Articles)
 
 	if listJSON {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(result.Articles)
+		return printJSON(articles)
 	}
 
-	printTable(result.Articles)
-	fmt.Printf("\nShowing %d of %d articles (use --all to fetch all, --from-db to list local)\n", len(result.Articles), result.TotalCount)
+	printTable(articles)
+	fmt.Print(formatRemoteListSummary(len(result.Articles), countDeletedArticles(result.Articles), len(articles)))
 	return nil
 }
 
@@ -87,16 +86,17 @@ func listAllFromAPI(svc *publish.Service) error {
 	if err != nil {
 		return fmt.Errorf("fetch all articles: %w", err)
 	}
+	detectedCount := len(articles)
+	deletedCount := countDeletedArticles(articles)
+	articles = filterDeletedArticles(articles)
 	fmt.Fprintf(os.Stderr, " done.\n\n")
 
 	if listJSON {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(articles)
+		return printJSON(articles)
 	}
 
 	printTable(articles)
-	fmt.Printf("\nTotal: %d articles\n", len(articles))
+	fmt.Print(formatRemoteListSummary(detectedCount, deletedCount, len(articles)))
 	return nil
 }
 
@@ -112,19 +112,17 @@ func listFromDatabase() error {
 		limit = 0 // 0 means no limit in ListArticles
 	}
 
-	articles, err := store.ListArticles(limit)
+	articles, err := store.ListActiveArticles(limit)
 	if err != nil {
 		return fmt.Errorf("query database: %w", err)
 	}
 
 	if listJSON {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(articles)
+		return printJSON(articles)
 	}
 
 	printTable(articles)
-	total, _ := store.ArticleCount()
+	total, _ := store.ActiveArticleCount()
 	if !listAll && limit > 0 && len(articles) < total {
 		fmt.Printf("\nShowing %d of %d articles (use --all for full list)\n", len(articles), total)
 	} else {
@@ -133,12 +131,54 @@ func listFromDatabase() error {
 	return nil
 }
 
+func filterDeletedArticles(articles []publish.Article) []publish.Article {
+	active := articles[:0]
+	seen := make(map[int64]bool)
+	for _, a := range articles {
+		if a.IsDeleted || seen[a.AppMsgID] {
+			continue
+		}
+		seen[a.AppMsgID] = true
+		active = append(active, a)
+	}
+	return active
+}
+
+type listArticleJSON struct {
+	Title       string `json:"title"`
+	URL         string `json:"url"`
+	PublishTime int64  `json:"publish_time"`
+	Cover       string `json:"cover,omitempty"`
+	Digest      string `json:"digest,omitempty"`
+	ReadNum     int    `json:"read_num"`
+	LikeNum     int    `json:"like_num"`
+}
+
+func printJSON(articles []publish.Article) error {
+	output := make([]listArticleJSON, 0, len(articles))
+	for _, a := range articles {
+		output = append(output, listArticleJSON{
+			Title:       a.Title,
+			URL:         a.URL,
+			PublishTime: a.PublishTime,
+			Cover:       a.Cover,
+			Digest:      a.Digest,
+			ReadNum:     a.ReadNum,
+			LikeNum:     a.LikeNum,
+		})
+	}
+
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(output)
+}
+
 func printTable(articles []publish.Article) {
 	fmt.Printf("%-12s  %s\n", "TIME", "TITLE")
 	fmt.Println("──────────────────────────────────────────────────")
 
 	for _, a := range articles {
-		t := time.Unix(a.PublishTime, 0).Format("2006-01-02")
+		t := formatPublishDate(a.PublishTime)
 		status := ""
 		if a.IsDeleted {
 			status = " [DELETED]"
@@ -148,4 +188,16 @@ func printTable(articles []publish.Article) {
 			fmt.Printf("%-12s  %s\n", "", a.URL)
 		}
 	}
+}
+
+func formatPublishDate(publishTime int64) string {
+	if publishTime <= 0 {
+		return "-"
+	}
+	return time.Unix(publishTime, 0).Format("2006-01-02")
+}
+
+func formatRemoteListSummary(detectedCount, deletedCount, shownCount int) string {
+	return fmt.Sprintf("\nDone. Detected %d published records, %d deleted, %d articles listed.\n",
+		detectedCount, deletedCount, shownCount)
 }

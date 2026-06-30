@@ -144,6 +144,18 @@ func TestParseResponse_InvalidPublishPage(t *testing.T) {
 	}
 }
 
+func TestParseResponse_BaseRespError(t *testing.T) {
+	jsonData := `{
+		"base_resp": {"err_msg": "invalid session", "ret": 200003},
+		"is_admin": false,
+		"publish_page": ""
+	}`
+	_, _, err := parseResponse([]byte(jsonData))
+	if err == nil {
+		t.Fatal("expected error for non-zero base_resp ret")
+	}
+}
+
 func TestParseResponse_MalformedPublishInfo(t *testing.T) {
 	// publish_info contains invalid JSON — should be skipped gracefully
 	jsonData := `{

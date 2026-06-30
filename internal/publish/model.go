@@ -1,6 +1,9 @@
 package publish
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // Article represents a single published article.
 type Article struct {
@@ -34,10 +37,10 @@ type baseResp struct {
 
 // publishPage is the decoded inner structure of publish_page.
 type publishPage struct {
-	TotalCount     int             `json:"total_count"`
-	PublishCount   int             `json:"publish_count"`
-	MasssendCount  int             `json:"masssend_count"`
-	PublishList    []publishRecord `json:"publish_list"`
+	TotalCount    int             `json:"total_count"`
+	PublishCount  int             `json:"publish_count"`
+	MasssendCount int             `json:"masssend_count"`
+	PublishList   []publishRecord `json:"publish_list"`
 }
 
 type publishRecord struct {
@@ -47,17 +50,17 @@ type publishRecord struct {
 
 // publishInfo is the decoded inner structure of publish_info.
 type publishInfo struct {
-	Type       int           `json:"type"`
-	MsgID      int64         `json:"msgid"`
-	SentInfo   sentInfo      `json:"sent_info"`
-	SentStatus sentStatus    `json:"sent_status"`
-	AppMsgInfo []appMsgItem  `json:"appmsg_info"`
+	Type       int          `json:"type"`
+	MsgID      int64        `json:"msgid"`
+	SentInfo   sentInfo     `json:"sent_info"`
+	SentStatus sentStatus   `json:"sent_status"`
+	AppMsgInfo []appMsgItem `json:"appmsg_info"`
 }
 
 type sentInfo struct {
-	Time       int64 `json:"time"`
-	IsSendAll  bool  `json:"is_send_all"`
-	IsPublished int  `json:"is_published"`
+	Time        int64 `json:"time"`
+	IsSendAll   bool  `json:"is_send_all"`
+	IsPublished int   `json:"is_published"`
 }
 
 type sentStatus struct {
@@ -85,6 +88,9 @@ func parseResponse(body []byte) ([]Article, int, error) {
 	var outer appmsgpublishResponse
 	if err := json.Unmarshal(body, &outer); err != nil {
 		return nil, 0, err
+	}
+	if outer.BaseResp.Ret != 0 {
+		return nil, 0, fmt.Errorf("wechat api error %d: %s", outer.BaseResp.Ret, outer.BaseResp.ErrMsg)
 	}
 
 	// Decode the first layer of JSON-string: publish_page

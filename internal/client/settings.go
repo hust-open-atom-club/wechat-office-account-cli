@@ -9,19 +9,19 @@ import (
 
 // AccountInfo holds the parsed account profile from the settings page API.
 type AccountInfo struct {
-	Nickname           string   `json:"nickname"`            // 公众号名称
-	WeChatID           string   `json:"wechat_id"`           // 微信号
-	OriginalID         string   `json:"original_id"`         // 原始ID
-	Signature          string   `json:"signature"`           // 简介
-	Email              string   `json:"email"`               // 绑定邮箱
-	FinderNickname     string   `json:"finder_nickname"`     // 视频号
-	WxNickname         string   `json:"wx_nickname"`         // 管理员微信昵称
-	Categories         []string `json:"categories"`          // 分类
-	FansCount          int      `json:"fans_count"`          // 粉丝数
-	Location           string   `json:"location"`            // 所在地
-	Verified           bool     `json:"verified"`            // 是否认证
-	Searchable         bool     `json:"searchable"`          // 是否允许搜索
-	Token              string   `json:"token"`               // 当前 token（脱敏）
+	Nickname       string   `json:"nickname"`        // 公众号名称
+	WeChatID       string   `json:"wechat_id"`       // 微信号
+	OriginalID     string   `json:"original_id"`     // 原始ID
+	Signature      string   `json:"signature"`       // 简介
+	Email          string   `json:"email"`           // 绑定邮箱
+	FinderNickname string   `json:"finder_nickname"` // 视频号
+	WxNickname     string   `json:"wx_nickname"`     // 管理员微信昵称
+	Categories     []string `json:"categories"`      // 分类
+	FansCount      int      `json:"fans_count"`      // 粉丝数
+	Location       string   `json:"location"`        // 所在地
+	Verified       bool     `json:"verified"`        // 是否认证
+	Searchable     bool     `json:"searchable"`      // 是否允许搜索
+	Token          string   `json:"token"`           // 当前 token（脱敏）
 }
 
 // FetchAccountInfo fetches the account profile from the settings API.
@@ -39,10 +39,16 @@ func FetchAccountInfo(session *auth.Session) (*AccountInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("request settings: %w", err)
 	}
+	if resp.StatusCode() != 200 {
+		return nil, fmt.Errorf("settings returned status %d: %s", resp.StatusCode(), resp.String())
+	}
 
 	var result settingResponse
 	if err := json.Unmarshal(resp.Body(), &result); err != nil {
 		return nil, fmt.Errorf("parse settings: %w", err)
+	}
+	if result.BaseResp.Ret != 0 {
+		return nil, fmt.Errorf("wechat api error %d: %s", result.BaseResp.Ret, result.BaseResp.ErrMsg)
 	}
 
 	info := result.SettingInfo
@@ -87,17 +93,17 @@ type baseResp struct {
 }
 
 type settingInfo struct {
-	Nickname           nicknameInfo      `json:"nickname"`
-	Username           string            `json:"username"`
-	OriginalUsername   string            `json:"original_username"`
-	Intro              introInfo         `json:"intro"`
-	BindEmail          bindEmailInfo     `json:"bind_email"`
-	BindFinderStatus   bindFinderInfo    `json:"bind_finder_status"`
-	BizCategoryInfo    bizCategoryInfo   `json:"biz_category_info"`
-	TotalFansNum       int               `json:"total_fans_num"`
-	LocationInfo       locationInfo      `json:"location_info"`
-	WxVerify           wxVerifyInfo      `json:"wxverify"`
-	SearchOpen         int               `json:"search_open"`
+	Nickname         nicknameInfo    `json:"nickname"`
+	Username         string          `json:"username"`
+	OriginalUsername string          `json:"original_username"`
+	Intro            introInfo       `json:"intro"`
+	BindEmail        bindEmailInfo   `json:"bind_email"`
+	BindFinderStatus bindFinderInfo  `json:"bind_finder_status"`
+	BizCategoryInfo  bizCategoryInfo `json:"biz_category_info"`
+	TotalFansNum     int             `json:"total_fans_num"`
+	LocationInfo     locationInfo    `json:"location_info"`
+	WxVerify         wxVerifyInfo    `json:"wxverify"`
+	SearchOpen       int             `json:"search_open"`
 }
 
 type nicknameInfo struct {

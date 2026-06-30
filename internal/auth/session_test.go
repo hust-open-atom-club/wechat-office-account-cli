@@ -1,19 +1,9 @@
 package auth
 
-import (
-	"encoding/json"
-	"os"
-	"path/filepath"
-	"testing"
-
-	"github.com/mudongliang/weoa-cli/internal/config"
-)
+import "testing"
 
 func TestSessionSaveAndLoad(t *testing.T) {
-	// Use a temp config dir to avoid side effects
-	tmpDir := t.TempDir()
-	// Override session file path by writing directly
-	sessionFile := filepath.Join(tmpDir, "session.json")
+	t.Setenv("HOME", t.TempDir())
 
 	session := &Session{
 		Token: "test-token-12345",
@@ -24,23 +14,12 @@ func TestSessionSaveAndLoad(t *testing.T) {
 		UserAgent: "Mozilla/5.0 TestBrowser",
 	}
 
-	// Save directly to temp path
-	data, err := json.MarshalIndent(session, "", "  ")
+	if err := session.Save(); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+	loaded, err := Load()
 	if err != nil {
-		t.Fatalf("marshal session: %v", err)
-	}
-	if err := os.WriteFile(sessionFile, data, 0600); err != nil {
-		t.Fatalf("write session: %v", err)
-	}
-
-	// Load from temp path
-	loadedData, err := os.ReadFile(sessionFile)
-	if err != nil {
-		t.Fatalf("read session: %v", err)
-	}
-	var loaded Session
-	if err := json.Unmarshal(loadedData, &loaded); err != nil {
-		t.Fatalf("unmarshal session: %v", err)
+		t.Fatalf("load session: %v", err)
 	}
 
 	if loaded.Token != session.Token {
@@ -108,10 +87,7 @@ func TestSessionHTTPCookies(t *testing.T) {
 }
 
 func TestSessionClear(t *testing.T) {
-	// Save a session first, then clear it
-	if err := config.EnsureDir(); err != nil {
-		t.Fatalf("ensure dir: %v", err)
-	}
+	t.Setenv("HOME", t.TempDir())
 
 	s := &Session{Token: "will-be-deleted"}
 	if err := s.Save(); err != nil {

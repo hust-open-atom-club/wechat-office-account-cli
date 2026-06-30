@@ -47,6 +47,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 	newCount := 0
 	var syncErr error
 	_, err = svc.ListAll(func(articles []publish.Article) bool {
+		seenExisting := false
 		for _, a := range articles {
 			exists, checkErr := store.HasAppMsgID(a.AppMsgID)
 			if checkErr != nil {
@@ -54,8 +55,8 @@ func runSync(cmd *cobra.Command, args []string) error {
 				return true
 			}
 			if exists {
-				// We've reached previously synced articles — stop paginating
-				return true
+				seenExisting = true
+				continue
 			}
 
 			inserted, insertErr := store.InsertArticle(a)
@@ -68,7 +69,8 @@ func runSync(cmd *cobra.Command, args []string) error {
 				fmt.Printf("+ %s\n", a.Title)
 			}
 		}
-		return false
+		// Stop before the next page, but only after this page has been fully processed.
+		return seenExisting
 	})
 	if err != nil {
 		return fmt.Errorf("sync: %w", err)

@@ -19,6 +19,7 @@ weoa-cli
 ```
 
 - **auth login** — 启动浏览器打开 mp.weixin.qq.com，扫码登录后自动保存 Cookie + Token
+- **auth login --qr** — 在终端直接打印二维码扫码，适合 SSH/服务器环境
 - **auth logout** — 清除本地保存的登录会话
 - **auth status** — 检查当前是否已登录，显示账号名和微信号
 - **whoami** — 展示公众号名称、微信号、简介、邮箱、粉丝数、分类、所在地、视频号、管理员等信息
@@ -40,6 +41,7 @@ go build -o weoa-cli .
 ```bash
 # 登录（打开浏览器，用微信扫码）
 weoa-cli auth login
+weoa-cli auth login --qr              # 终端直接打印二维码
 
 # 查看登录状态
 weoa-cli auth status

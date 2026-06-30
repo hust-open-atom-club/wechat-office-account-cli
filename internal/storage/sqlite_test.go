@@ -289,3 +289,51 @@ func TestStore_ListActiveArticlesSkipsDeleted(t *testing.T) {
 		t.Fatalf("ActiveArticleCount = %d, want 2", count)
 	}
 }
+
+func TestStore_SearchActiveArticles(t *testing.T) {
+	store := testStore(t)
+
+	articles := []publish.Article{
+		{AppMsgID: 1, PublishID: 10, Title: "Kernel Notes", URL: "https://example.com/kernel", Digest: "deep dive", PublishTime: 100},
+		{AppMsgID: 2, PublishID: 20, Title: "Meeting Notice", URL: "https://example.com/meeting", Digest: "infra discussion", PublishTime: 200},
+		{AppMsgID: 3, PublishID: 30, Title: "Deleted Kernel", URL: "https://example.com/deleted", Digest: "kernel", PublishTime: 300, IsDeleted: true},
+		{AppMsgID: 4, PublishID: 40, Title: "Other", URL: "https://example.com/special-url", Digest: "misc", PublishTime: 400},
+	}
+	for _, a := range articles {
+		if _, err := store.InsertArticle(a); err != nil {
+			t.Fatalf("InsertArticle: %v", err)
+		}
+	}
+
+	result, err := store.SearchActiveArticles("kernel", 0)
+	if err != nil {
+		t.Fatalf("SearchActiveArticles title/digest: %v", err)
+	}
+	if len(result) != 1 || result[0].AppMsgID != 1 {
+		t.Fatalf("kernel search IDs = %v, want [1]", articleIDs(result))
+	}
+
+	result, err = store.SearchActiveArticles("special-url", 10)
+	if err != nil {
+		t.Fatalf("SearchActiveArticles url: %v", err)
+	}
+	if len(result) != 1 || result[0].AppMsgID != 4 {
+		t.Fatalf("url search IDs = %v, want [4]", articleIDs(result))
+	}
+
+	count, err := store.SearchActiveArticleCount("kernel")
+	if err != nil {
+		t.Fatalf("SearchActiveArticleCount: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("SearchActiveArticleCount = %d, want 1", count)
+	}
+}
+
+func articleIDs(articles []publish.Article) []int64 {
+	ids := make([]int64, 0, len(articles))
+	for _, a := range articles {
+		ids = append(ids, a.AppMsgID)
+	}
+	return ids
+}

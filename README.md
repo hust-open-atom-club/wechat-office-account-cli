@@ -59,7 +59,9 @@ weoa-cli publish sync
 # 从本地数据库列出（默认，无需网络；先运行 publish sync）
 weoa-cli publish list
 weoa-cli publish list -n 10            # 显示 10 条
+weoa-cli publish list --limit 10       # 等同于 -n 10
 weoa-cli publish list --all            # 本地全部
+weoa-cli publish list --search 内核    # 本地搜索标题、摘要、URL
 weoa-cli publish list --json           # JSON 格式
 weoa-cli publish list --json | jq '.[] | .title'
 

@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -101,6 +102,66 @@ func (s *Store) ListActiveArticles(limit int) ([]publish.Article, error) {
 	return s.listArticles(limit, true)
 }
 
+// SearchActiveArticles returns non-deleted articles matching query in title, digest, or URL.
+// If limit <= 0, returns all matching active articles without limit.
+func (s *Store) SearchActiveArticles(query string, limit int) ([]publish.Article, error) {
+	pattern, ok := searchPattern(query)
+	if !ok {
+		return s.ListActiveArticles(limit)
+	}
+
+	var rows *sql.Rows
+	var err error
+	if limit > 0 {
+		rows, err = s.db.Query(
+			`SELECT appmsgid, publish_id, title, url, publish_time, cover, digest, read_num, like_num, is_deleted
+			 FROM articles
+			 WHERE is_deleted = 0 AND (title LIKE ? OR digest LIKE ? OR url LIKE ?)
+			 ORDER BY appmsgid DESC LIMIT ?`,
+			pattern, pattern, pattern, limit,
+		)
+	} else {
+		rows, err = s.db.Query(
+			`SELECT appmsgid, publish_id, title, url, publish_time, cover, digest, read_num, like_num, is_deleted
+			 FROM articles
+			 WHERE is_deleted = 0 AND (title LIKE ? OR digest LIKE ? OR url LIKE ?)
+			 ORDER BY appmsgid DESC`,
+			pattern, pattern, pattern,
+		)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("search articles: %w", err)
+	}
+	return scanArticles(rows)
+}
+
+// SearchActiveArticleCount returns the number of non-deleted articles matching query.
+func (s *Store) SearchActiveArticleCount(query string) (int, error) {
+	pattern, ok := searchPattern(query)
+	if !ok {
+		return s.ActiveArticleCount()
+	}
+
+	var count int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM articles
+		 WHERE is_deleted = 0 AND (title LIKE ? OR digest LIKE ? OR url LIKE ?)`,
+		pattern, pattern, pattern,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count search articles: %w", err)
+	}
+	return count, nil
+}
+
+func searchPattern(query string) (string, bool) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return "", false
+	}
+	return "%" + query + "%", true
+}
+
 func (s *Store) listArticles(limit int, activeOnly bool) ([]publish.Article, error) {
 	var rows *sql.Rows
 	var err error
@@ -130,8 +191,11 @@ func (s *Store) listArticles(limit int, activeOnly bool) ([]publish.Article, err
 	if err != nil {
 		return nil, fmt.Errorf("query articles: %w", err)
 	}
-	defer rows.Close()
+	return scanArticles(rows)
+}
 
+func scanArticles(rows *sql.Rows) ([]publish.Article, error) {
+	defer rows.Close()
 	var articles []publish.Article
 	for rows.Next() {
 		var a publish.Article

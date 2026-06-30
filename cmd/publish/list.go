@@ -18,6 +18,7 @@ var (
 	listJSON   bool
 	listAll    bool
 	listRemote bool
+	listSearch string
 )
 
 // NewListCmd creates the "publish list" subcommand.
@@ -36,12 +37,16 @@ Use --remote to fetch from the WeChat backend.`,
 	cmd.Flags().BoolVar(&listJSON, "json", false, "Output in JSON format")
 	cmd.Flags().BoolVarP(&listAll, "all", "a", false, "Show all published articles")
 	cmd.Flags().BoolVar(&listRemote, "remote", false, "Fetch articles from the WeChat backend")
+	cmd.Flags().StringVar(&listSearch, "search", "", "Search local articles by title, digest, or URL")
 
 	return cmd
 }
 
 func runList(cmd *cobra.Command, args []string) error {
 	if listRemote {
+		if listSearch != "" {
+			return fmt.Errorf("--search is only supported for local database queries")
+		}
 		return listFromAPI()
 	}
 	return listFromDatabase()
@@ -64,7 +69,6 @@ func listFromAPI() error {
 		return listAllFromAPI(svc)
 	}
 
-	// Default: single page
 	result, err := svc.List(0, listLimit)
 	if err != nil {
 		return fmt.Errorf("list articles: %w", err)
@@ -109,10 +113,15 @@ func listFromDatabase() error {
 
 	limit := listLimit
 	if listAll {
-		limit = 0 // 0 means no limit in ListArticles
+		limit = 0
 	}
 
-	articles, err := store.ListActiveArticles(limit)
+	var articles []publish.Article
+	if listSearch != "" {
+		articles, err = store.SearchActiveArticles(listSearch, limit)
+	} else {
+		articles, err = store.ListActiveArticles(limit)
+	}
 	if err != nil {
 		return fmt.Errorf("query database: %w", err)
 	}
@@ -122,6 +131,18 @@ func listFromDatabase() error {
 	}
 
 	printTable(articles)
+	if listSearch != "" {
+		total, countErr := store.SearchActiveArticleCount(listSearch)
+		if countErr != nil {
+			return fmt.Errorf("count search results: %w", countErr)
+		}
+		if !listAll && limit > 0 && len(articles) < total {
+			fmt.Printf("\nShowing %d of %d matched articles for %q\n", len(articles), total, listSearch)
+		} else {
+			fmt.Printf("\nMatched %d articles for %q\n", total, listSearch)
+		}
+		return nil
+	}
 	total, _ := store.ActiveArticleCount()
 	if !listAll && limit > 0 && len(articles) < total {
 		fmt.Printf("\nShowing %d of %d articles (use --all for full list)\n", len(articles), total)

@@ -2,7 +2,6 @@ package config
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -48,21 +47,20 @@ func TestDBFile(t *testing.T) {
 }
 
 func TestEnsureDir(t *testing.T) {
-	// Use a temp directory to avoid side effects
-	tmpDir := filepath.Join(os.TempDir(), "weoa-cli-test-"+t.Name())
-	defer os.RemoveAll(tmpDir)
+	t.Setenv("HOME", t.TempDir())
 
-	// Override default dir: we can't directly, but we test EnsureDir directly
-	err := os.MkdirAll(tmpDir, 0700)
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
+	if err := EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir failed: %v", err)
 	}
 
-	info, err := os.Stat(tmpDir)
+	info, err := os.Stat(DefaultDir())
 	if err != nil {
-		t.Fatalf("stat temp dir: %v", err)
+		t.Fatalf("stat default dir: %v", err)
 	}
 	if !info.IsDir() {
-		t.Error("created path is not a directory")
+		t.Error("default path is not a directory")
+	}
+	if info.Mode().Perm() != 0700 {
+		t.Errorf("default dir permissions = %o, want 700", info.Mode().Perm())
 	}
 }

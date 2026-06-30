@@ -147,7 +147,7 @@ func filterDeletedArticles(articles []publish.Article) []publish.Article {
 type listArticleJSON struct {
 	Title       string `json:"title"`
 	URL         string `json:"url"`
-	PublishTime int64  `json:"publish_time"`
+	PublishTime string `json:"publish_time"`
 	Cover       string `json:"cover,omitempty"`
 	Digest      string `json:"digest,omitempty"`
 	ReadNum     int    `json:"read_num"`
@@ -160,7 +160,7 @@ func printJSON(articles []publish.Article) error {
 		output = append(output, listArticleJSON{
 			Title:       a.Title,
 			URL:         a.URL,
-			PublishTime: a.PublishTime,
+			PublishTime: formatPublishDate(a.PublishTime),
 			Cover:       a.Cover,
 			Digest:      a.Digest,
 			ReadNum:     a.ReadNum,

@@ -30,7 +30,7 @@ func TestListArticleJSONOmitsDeletedField(t *testing.T) {
 		{
 			Title:       "Active",
 			URL:         "https://example.com",
-			PublishTime: 1000,
+			PublishTime: "2023-08-10",
 		},
 	}
 

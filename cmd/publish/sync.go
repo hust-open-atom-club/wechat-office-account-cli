@@ -45,21 +45,28 @@ func runSync(cmd *cobra.Command, args []string) error {
 	}
 	defer store.Close()
 
+	initialCount, err := store.ArticleCount()
+	if err != nil {
+		return fmt.Errorf("count existing articles: %w", err)
+	}
+	fullSync := initialCount == 0
+
 	svc := publish.NewService(c)
 
 	fmt.Println("Syncing...")
 
 	newCount := 0
 	var syncErr error
+	seenThisRun := make(map[int64]bool)
 	_, err = svc.ListAll(func(articles []publish.Article) bool {
-		stop, pageErr := syncArticlePage(store, articles, func(a publish.Article) {
+		stop, pageErr := syncArticlePage(store, articles, seenThisRun, func(a publish.Article) {
 			newCount++
 			fmt.Printf("+ %s\n", a.Title)
 		})
 		if pageErr != nil {
 			syncErr = pageErr
 		}
-		return stop
+		return shouldStopSync(fullSync, stop)
 	})
 	if err != nil {
 		return fmt.Errorf("sync: %w", err)
@@ -83,15 +90,25 @@ func runSync(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func syncArticlePage(store syncStore, articles []publish.Article, onInsert func(publish.Article)) (bool, error) {
+func shouldStopSync(fullSync, pageStop bool) bool {
+	return !fullSync && pageStop
+}
+
+func syncArticlePage(store syncStore, articles []publish.Article, seenThisRun map[int64]bool, onInsert func(publish.Article)) (bool, error) {
 	seenExisting := false
 	for _, a := range articles {
+		if a.IsDeleted {
+			continue
+		}
+
 		exists, checkErr := store.HasAppMsgID(a.AppMsgID)
 		if checkErr != nil {
 			return true, fmt.Errorf("check article %d: %w", a.AppMsgID, checkErr)
 		}
 		if exists {
-			seenExisting = true
+			if seenThisRun == nil || !seenThisRun[a.AppMsgID] {
+				seenExisting = true
+			}
 			continue
 		}
 
@@ -100,6 +117,9 @@ func syncArticlePage(store syncStore, articles []publish.Article, onInsert func(
 			return true, fmt.Errorf("insert article %d: %w", a.AppMsgID, insertErr)
 		}
 		if inserted {
+			if seenThisRun != nil {
+				seenThisRun[a.AppMsgID] = true
+			}
 			if onInsert != nil {
 				onInsert(a)
 			}

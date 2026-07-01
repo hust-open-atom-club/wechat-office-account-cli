@@ -19,7 +19,7 @@ weoa-cli
 ```
 
 - **auth login** — 启动浏览器打开 mp.weixin.qq.com，扫码登录后自动保存 Cookie + Token
-- **auth login --qr** — 在终端直接打印二维码扫码，适合 SSH/服务器环境
+- **auth login --qr** — 在终端直接打印二维码扫码，适合 SSH/服务器环境（使用半块字符渲染，兼容 MobaXterm、VS Code 终端等）
 - **auth logout** — 清除本地保存的登录会话
 - **auth status** — 检查当前是否已登录，显示账号名和微信号
 - **whoami** — 展示公众号名称、微信号、简介、邮箱、粉丝数、分类、所在地、视频号、管理员等信息
@@ -29,8 +29,8 @@ weoa-cli
 ## 安装
 
 ```bash
-git clone https://github.com/mudongliang/weoa-cli.git
-cd weoa-cli
+git clone https://github.com/hust-open-atom-club/wechat-office-account-cli.git
+cd wechat-office-account-cli
 go build -o weoa-cli .
 ```
 
@@ -156,7 +156,8 @@ weoa-cli auth login
 | `github.com/go-resty/resty/v2` | HTTP 客户端 |
 | `github.com/mxschmitt/playwright-go` | 浏览器自动化（登录） |
 | `modernc.org/sqlite` | 纯 Go SQLite（无 CGO） |
-| `github.com/PuerkitoBio/goquery` | HTML 解析 |
+| `github.com/makiuchi-d/gozxing` | 二维码解码（识别登录二维码内容） |
+| `github.com/mdp/qrterminal/v3` | 终端二维码渲染（半块字符） |
 
 ## License
 

@@ -3,10 +3,13 @@ package auth
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"image"
-	"image/color"
+	_ "image/gif"
+	_ "image/jpeg"
 	_ "image/png"
+	"os"
 	"strings"
 	"time"
 
@@ -170,8 +173,13 @@ func printLoginQRCode(page playwright.Page) error {
 		return fmt.Errorf("decode QR code image: %w", err)
 	}
 
+	text, err := decodeQRText(img)
+	if err != nil {
+		return err
+	}
+
 	fmt.Println()
-	fmt.Print(renderQRImage(img, 48))
+	renderQRText(os.Stdout, text)
 	fmt.Println()
 	fmt.Println("Please scan the QR code with WeChat to log in.")
 	return nil
@@ -195,8 +203,20 @@ func captureLoginQRCode(page playwright.Page) ([]byte, error) {
 		if err != nil {
 			continue
 		}
+		// Most reliable: fetch the QR's raw <img src> PNG straight from the
+		// server (shares the page's cookies). This is the pristine image the
+		// backend generated — full resolution, no CSS scaling, no overlay.
+		if pngBytes, err := fetchImgSrc(page, locator); err == nil && len(pngBytes) > 0 {
+			return pngBytes, nil
+		}
+		// Next: the element's native pixels via a <canvas> readback, bypassing
+		// the CSS downscaling applied to the on-page <img>.
+		if pngBytes, err := nativePNGFromLocator(locator); err == nil && len(pngBytes) > 0 {
+			return pngBytes, nil
+		}
+		// Last resort: a device-scale screenshot of the element.
 		pngBytes, err := locator.Screenshot(playwright.LocatorScreenshotOptions{
-			Scale: playwright.ScreenshotScaleCss,
+			Scale: playwright.ScreenshotScaleDevice,
 		})
 		if err == nil && len(pngBytes) > 0 {
 			return pngBytes, nil
@@ -223,8 +243,11 @@ func captureLoginQRCode(page playwright.Page) ([]byte, error) {
 		return true;
 	}`); err == nil {
 		locator := page.Locator("[data-weoa-login-qr='1']").First()
+		if pngBytes, err := nativePNGFromLocator(locator); err == nil && len(pngBytes) > 0 {
+			return pngBytes, nil
+		}
 		pngBytes, err := locator.Screenshot(playwright.LocatorScreenshotOptions{
-			Scale: playwright.ScreenshotScaleCss,
+			Scale: playwright.ScreenshotScaleDevice,
 		})
 		if err == nil && len(pngBytes) > 0 {
 			return pngBytes, nil
@@ -234,72 +257,87 @@ func captureLoginQRCode(page playwright.Page) ([]byte, error) {
 	return nil, fmt.Errorf("find login QR code on page")
 }
 
-func renderQRImage(img image.Image, targetWidth int) string {
-	bounds := img.Bounds()
-	width := bounds.Dx()
-	height := bounds.Dy()
-	if width <= 0 || height <= 0 {
-		return ""
-	}
-	if targetWidth <= 0 || targetWidth > width {
-		targetWidth = width
-	}
-	targetHeight := height * targetWidth / width
-	if targetHeight <= 0 {
-		targetHeight = 1
+// fetchImgSrc downloads the raw bytes referenced by an <img>'s src attribute.
+// For an http(s) URL it fetches through the page's request context so the
+// login cookies are sent; for a data: URL it decodes the embedded bytes.
+// Returns an error for non-<img> elements or elements without a usable src.
+func fetchImgSrc(page playwright.Page, locator playwright.Locator) ([]byte, error) {
+	src, err := locator.GetAttribute("src")
+	if err != nil || src == "" {
+		return nil, fmt.Errorf("no src attribute")
 	}
 
-	var b strings.Builder
-	for y := 0; y < targetHeight; y++ {
-		for x := 0; x < targetWidth; x++ {
-			if sampleDark(img, bounds, x, y, targetWidth, targetHeight) {
-				b.WriteString("\x1b[40m  ")
-			} else {
-				b.WriteString("\x1b[47m  ")
-			}
+	if strings.HasPrefix(src, "data:") {
+		comma := strings.IndexByte(src, ',')
+		if comma == -1 {
+			return nil, fmt.Errorf("malformed data URL")
 		}
-		b.WriteString("\x1b[0m\n")
+		if strings.Contains(src[:comma], "base64") {
+			return base64.StdEncoding.DecodeString(src[comma+1:])
+		}
+		return []byte(src[comma+1:]), nil
 	}
-	return b.String()
+
+	if strings.HasPrefix(src, "//") {
+		src = "https:" + src
+	} else if strings.HasPrefix(src, "/") {
+		src = strings.TrimSuffix(loginURL, "/") + src
+	}
+	if !strings.HasPrefix(src, "http") {
+		return nil, fmt.Errorf("unsupported src scheme")
+	}
+
+	resp, err := page.Request().Get(src)
+	if err != nil {
+		return nil, err
+	}
+	body, err := resp.Body()
+	if err != nil {
+		return nil, err
+	}
+	if len(body) == 0 {
+		return nil, fmt.Errorf("empty image body")
+	}
+	return body, nil
 }
 
-func sampleDark(img image.Image, bounds image.Rectangle, x, y, targetWidth, targetHeight int) bool {
-	startX := bounds.Min.X + x*bounds.Dx()/targetWidth
-	endX := bounds.Min.X + (x+1)*bounds.Dx()/targetWidth
-	startY := bounds.Min.Y + y*bounds.Dy()/targetHeight
-	endY := bounds.Min.Y + (y+1)*bounds.Dy()/targetHeight
-	if endX <= startX {
-		endX = startX + 1
-	}
-	if endY <= startY {
-		endY = startY + 1
-	}
-
-	var total uint64
-	var count uint64
-	for py := startY; py < endY; py++ {
-		for px := startX; px < endX; px++ {
-			r, g, b, a := img.At(px, py).RGBA()
-			if a < 0x8000 {
-				continue
+// nativePNGFromLocator reads an element's pixels at its intrinsic resolution by
+// drawing it onto a canvas and reading back a PNG data URL. This bypasses the
+// CSS downscaling applied to the on-page <img>, yielding a crisp image the QR
+// decoder can actually resolve. Works for both <img> and <canvas> elements.
+func nativePNGFromLocator(locator playwright.Locator) ([]byte, error) {
+	val, err := locator.Evaluate(`(el) => {
+		try {
+			if (el.tagName === 'CANVAS') {
+				return el.toDataURL('image/png');
 			}
-			total += uint64(luminance(color.RGBA64{
-				R: uint16(r),
-				G: uint16(g),
-				B: uint16(b),
-				A: uint16(a),
-			}))
-			count++
+			const w = el.naturalWidth || el.width;
+			const h = el.naturalHeight || el.height;
+			if (!w || !h) return null;
+			const canvas = document.createElement('canvas');
+			canvas.width = w;
+			canvas.height = h;
+			const ctx = canvas.getContext('2d');
+			ctx.fillStyle = '#ffffff';
+			ctx.fillRect(0, 0, w, h);
+			ctx.drawImage(el, 0, 0, w, h);
+			return canvas.toDataURL('image/png');
+		} catch (e) {
+			return null;
 		}
+	}`, nil)
+	if err != nil {
+		return nil, err
 	}
-	if count == 0 {
-		return false
+	dataURL, ok := val.(string)
+	if !ok || dataURL == "" {
+		return nil, fmt.Errorf("no native image data")
 	}
-	return total/count < 0x8000
-}
-
-func luminance(c color.RGBA64) uint32 {
-	return (uint32(c.R)*299 + uint32(c.G)*587 + uint32(c.B)*114) / 1000
+	comma := strings.IndexByte(dataURL, ',')
+	if comma == -1 {
+		return nil, fmt.Errorf("malformed data URL")
+	}
+	return base64.StdEncoding.DecodeString(dataURL[comma+1:])
 }
 
 // waitForLogin polls until the page navigates to the home (dashboard) URL

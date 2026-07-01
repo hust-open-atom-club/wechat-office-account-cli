@@ -3,15 +3,16 @@ module github.com/mudongliang/weoa-cli
 go 1.26.3
 
 require (
-	github.com/PuerkitoBio/goquery v1.12.0
 	github.com/go-resty/resty/v2 v2.17.2
+	github.com/makiuchi-d/gozxing v0.1.1
+	github.com/mdp/qrterminal/v3 v3.2.1
 	github.com/mxschmitt/playwright-go v0.6100.0
 	github.com/spf13/cobra v1.10.2
 	modernc.org/sqlite v1.53.0
+	rsc.io/qr v0.2.0
 )
 
 require (
-	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/deckarep/golang-set/v2 v2.8.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-jose/go-jose/v3 v3.0.5 // indirect
@@ -24,6 +25,9 @@ require (
 	github.com/spf13/pflag v1.0.9 // indirect
 	golang.org/x/net v0.52.0 // indirect
 	golang.org/x/sys v0.44.0 // indirect
+	golang.org/x/term v0.41.0 // indirect
+	golang.org/x/text v0.35.0 // indirect
+	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
 	modernc.org/libc v1.73.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect

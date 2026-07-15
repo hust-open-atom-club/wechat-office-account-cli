@@ -1,8 +1,6 @@
 package publish
 
 import (
-	"encoding/json"
-	"strings"
 	"testing"
 
 	internalpublish "github.com/mudongliang/weoa-cli/internal/publish"
@@ -22,36 +20,6 @@ func TestFilterDeletedArticles(t *testing.T) {
 	}
 	if filtered[0].AppMsgID != 1 || filtered[1].AppMsgID != 3 {
 		t.Fatalf("filtered IDs = [%d, %d], want [1, 3]", filtered[0].AppMsgID, filtered[1].AppMsgID)
-	}
-}
-
-func TestListArticleJSONOmitsDeletedField(t *testing.T) {
-	payload := []listArticleJSON{
-		{
-			Title:       "Active",
-			URL:         "https://example.com",
-			PublishTime: "2023-08-10",
-		},
-	}
-
-	data, err := json.Marshal(payload)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	if strings.Contains(string(data), "is_deleted") {
-		t.Fatalf("JSON should not contain is_deleted: %s", data)
-	}
-	if strings.Contains(string(data), "publish_id") {
-		t.Fatalf("JSON should not contain publish_id: %s", data)
-	}
-	if strings.Contains(string(data), "appmsgid") {
-		t.Fatalf("JSON should not contain appmsgid: %s", data)
-	}
-	if !strings.Contains(string(data), "read_num") {
-		t.Fatalf("JSON should contain read_num even when zero: %s", data)
-	}
-	if !strings.Contains(string(data), "like_num") {
-		t.Fatalf("JSON should contain like_num even when zero: %s", data)
 	}
 }
 

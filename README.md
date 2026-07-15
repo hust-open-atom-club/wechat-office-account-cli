@@ -15,7 +15,8 @@ weoa-cli
 ├── whoami           查看公众号详细信息
 └── publish
     ├── list         列出已发表文章
-    └── sync         增量同步文章到本地数据库
+    ├── sync         增量同步文章到本地数据库
+    └── export       导出已发表文章
 ```
 
 - **auth login** — 启动浏览器打开 mp.weixin.qq.com，扫码登录后自动保存 Cookie + Token
@@ -23,8 +24,9 @@ weoa-cli
 - **auth logout** — 清除本地保存的登录会话
 - **auth status** — 检查当前是否已登录，显示账号名和微信号
 - **whoami** — 展示公众号名称、微信号、简介、邮箱、粉丝数、分类、所在地、视频号、管理员等信息
-- **publish list** — 默认从本地 SQLite 列出未删除文章，支持 `--all`、`--json`；使用 `--remote` 联网从微信后台接口获取
+- **publish list** — 默认从本地 SQLite 列出未删除文章，支持 `--all`、`--search`；使用 `--remote` 联网从微信后台接口获取
 - **publish sync** — 同步未删除文章索引到本地 SQLite，按 `appmsgid` 去重；首次全量，后续增量
+- **publish export** — 从本地 SQLite 导出未删除文章，支持 `json`、`csv`、`markdown`
 
 ## 安装
 
@@ -64,14 +66,19 @@ weoa-cli publish list -n 10            # 显示 10 条
 weoa-cli publish list --limit 10       # 等同于 -n 10
 weoa-cli publish list --all            # 本地全部
 weoa-cli publish list --search 内核    # 本地搜索标题、摘要、URL
-weoa-cli publish list --json           # JSON 格式
-weoa-cli publish list --json | jq '.[] | .title'
+
+# 从本地数据库导出（默认导出全部未删除文章）
+weoa-cli publish export json
+weoa-cli publish export json | jq '.[] | .title'
+weoa-cli publish export csv > articles.csv
+weoa-cli publish export markdown > articles.md
+weoa-cli publish export markdown --search 内核
+weoa-cli publish export csv -n 50
 
 # 联网从 API 列出
 weoa-cli publish list --remote
 weoa-cli publish list --remote -n 10
 weoa-cli publish list --remote --all
-weoa-cli publish list --remote --json
 ```
 
 ## 技术架构
@@ -85,7 +92,8 @@ weoa-cli/
 │   ├── auth/login.go           # weoa-cli auth login
 │   └── publish/
 │       ├── list.go             # weoa-cli publish list
-│       └── sync.go             # weoa-cli publish sync
+│       ├── sync.go             # weoa-cli publish sync
+│       └── export.go           # weoa-cli publish export
 ├── internal/
 │   ├── auth/
 │   │   ├── session.go          # Cookie/Token 持久化 (~/.config/weoa-cli/session.json)
@@ -146,7 +154,7 @@ weoa-cli auth login
 └── cache.db          # SQLite 文章索引
 ```
 
-`articles` 表以 `appmsgid` 为唯一键，存储标题、URL、发布时间、封面、摘要、阅读数、点赞数、删除状态等。`publish list` 默认读取本地 SQLite，并按 `appmsgid` 倒序展示，因此日常查询无需联网；需要查看微信后台实时数据时使用 `--remote`。
+`articles` 表以 `appmsgid` 为唯一键，存储标题、URL、发布时间、封面、摘要、阅读数、点赞数、删除状态等。`publish list` 默认读取本地 SQLite，并按 `appmsgid` 倒序展示，因此日常查询无需联网；需要查看微信后台实时数据时使用 `--remote`。`publish export` 从本地 SQLite 导出未删除文章，用于分享或后续处理。
 
 ## 依赖
 

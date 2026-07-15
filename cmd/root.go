@@ -55,6 +55,7 @@ func publishCmd() *cobra.Command {
 	}
 	cmd.AddCommand(publishcmd.NewListCmd())
 	cmd.AddCommand(publishcmd.NewSyncCmd())
+	cmd.AddCommand(publishcmd.NewExportCmd())
 	return cmd
 }
 

@@ -1,7 +1,6 @@
 package publish
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"time"
@@ -15,7 +14,6 @@ import (
 
 var (
 	listLimit  int
-	listJSON   bool
 	listAll    bool
 	listRemote bool
 	listSearch string
@@ -34,7 +32,6 @@ Use --remote to fetch from the WeChat backend.`,
 	}
 
 	cmd.Flags().IntVarP(&listLimit, "limit", "n", 20, "Number of articles to show")
-	cmd.Flags().BoolVar(&listJSON, "json", false, "Output in JSON format")
 	cmd.Flags().BoolVarP(&listAll, "all", "a", false, "Show all published articles")
 	cmd.Flags().BoolVar(&listRemote, "remote", false, "Fetch articles from the WeChat backend")
 	cmd.Flags().StringVar(&listSearch, "search", "", "Search local articles by title, digest, or URL")
@@ -75,10 +72,6 @@ func listFromAPI() error {
 	}
 	articles := filterDeletedArticles(result.Articles)
 
-	if listJSON {
-		return printJSON(articles)
-	}
-
 	printTable(articles)
 	fmt.Print(formatRemoteListSummary(len(result.Articles), countDeletedArticles(result.Articles), len(articles)))
 	return nil
@@ -94,10 +87,6 @@ func listAllFromAPI(svc *publish.Service) error {
 	deletedCount := countDeletedArticles(articles)
 	articles = filterDeletedArticles(articles)
 	fmt.Fprintf(os.Stderr, " done.\n\n")
-
-	if listJSON {
-		return printJSON(articles)
-	}
 
 	printTable(articles)
 	fmt.Print(formatRemoteListSummary(detectedCount, deletedCount, len(articles)))
@@ -124,10 +113,6 @@ func listFromDatabase() error {
 	}
 	if err != nil {
 		return fmt.Errorf("query database: %w", err)
-	}
-
-	if listJSON {
-		return printJSON(articles)
 	}
 
 	printTable(articles)
@@ -163,35 +148,6 @@ func filterDeletedArticles(articles []publish.Article) []publish.Article {
 		active = append(active, a)
 	}
 	return active
-}
-
-type listArticleJSON struct {
-	Title       string `json:"title"`
-	URL         string `json:"url"`
-	PublishTime string `json:"publish_time"`
-	Cover       string `json:"cover,omitempty"`
-	Digest      string `json:"digest,omitempty"`
-	ReadNum     int    `json:"read_num"`
-	LikeNum     int    `json:"like_num"`
-}
-
-func printJSON(articles []publish.Article) error {
-	output := make([]listArticleJSON, 0, len(articles))
-	for _, a := range articles {
-		output = append(output, listArticleJSON{
-			Title:       a.Title,
-			URL:         a.URL,
-			PublishTime: formatPublishDate(a.PublishTime),
-			Cover:       a.Cover,
-			Digest:      a.Digest,
-			ReadNum:     a.ReadNum,
-			LikeNum:     a.LikeNum,
-		})
-	}
-
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(output)
 }
 
 func printTable(articles []publish.Article) {

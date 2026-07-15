@@ -3,6 +3,7 @@ CLAUDE.md
 
 # Binary output
 /weoa-cli
+/bin/
 
 # Go build artifacts
 *.exe

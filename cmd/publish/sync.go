@@ -11,7 +11,7 @@ import (
 )
 
 type syncStore interface {
-	HasAppMsgID(appMsgID int64) (bool, error)
+	HasArticle(appMsgID int64, url string) (bool, error)
 	InsertArticle(a publish.Article) (bool, error)
 }
 
@@ -49,7 +49,11 @@ func runSync(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("count existing active articles: %w", err)
 	}
-	fullSync := initialCount == 0
+	needsFullSync, err := store.NeedsFullSync()
+	if err != nil {
+		return fmt.Errorf("read sync state: %w", err)
+	}
+	fullSync := initialCount == 0 || needsFullSync
 
 	svc := publish.NewService(c)
 
@@ -59,7 +63,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 	detectedCount := 0
 	deletedCount := 0
 	var syncErr error
-	seenThisRun := make(map[int64]bool)
+	seenThisRun := make(map[articleIdentity]bool)
 	_, err = svc.ListAll(func(articles []publish.Article) bool {
 		detectedCount += len(articles)
 		deletedCount += countDeletedArticles(articles)
@@ -78,6 +82,11 @@ func runSync(cmd *cobra.Command, args []string) error {
 	}
 	if syncErr != nil {
 		return syncErr
+	}
+	if fullSync {
+		if err := store.MarkFullSyncComplete(); err != nil {
+			return err
+		}
 	}
 
 	fmt.Println()
@@ -106,15 +115,16 @@ func countDeletedArticles(articles []publish.Article) int {
 	return count
 }
 
-func syncArticlePage(store syncStore, articles []publish.Article, seenThisRun map[int64]bool, onInsert func(publish.Article)) (bool, error) {
+func syncArticlePage(store syncStore, articles []publish.Article, seenThisRun map[articleIdentity]bool, onInsert func(publish.Article)) (bool, error) {
 	seenExisting := false
 	for _, a := range articles {
-		exists, checkErr := store.HasAppMsgID(a.AppMsgID)
+		identity := identityOf(a)
+		exists, checkErr := store.HasArticle(a.AppMsgID, a.URL)
 		if checkErr != nil {
 			return true, fmt.Errorf("check article %d: %w", a.AppMsgID, checkErr)
 		}
 		if exists {
-			if seenThisRun == nil || !seenThisRun[a.AppMsgID] {
+			if seenThisRun == nil || !seenThisRun[identity] {
 				seenExisting = true
 			}
 			continue
@@ -130,7 +140,7 @@ func syncArticlePage(store syncStore, articles []publish.Article, seenThisRun ma
 		}
 		if inserted {
 			if seenThisRun != nil {
-				seenThisRun[a.AppMsgID] = true
+				seenThisRun[identity] = true
 			}
 			if onInsert != nil {
 				onInsert(a)

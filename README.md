@@ -25,7 +25,7 @@ weoa-cli
 - **auth status** — 检查当前是否已登录，显示账号名和微信号
 - **whoami** — 展示公众号名称、微信号、简介、邮箱、粉丝数、分类、所在地、视频号、管理员等信息
 - **publish list** — 默认从本地 SQLite 列出未删除文章，支持 `--all`、`--search`；使用 `--remote` 联网从微信后台接口获取
-- **publish sync** — 同步未删除文章索引到本地 SQLite，按 `appmsgid` 去重；首次全量，后续增量
+- **publish sync** — 同步未删除文章索引到本地 SQLite，按 `appmsgid + URL` 去重；首次全量，后续增量
 - **publish export** — 从本地 SQLite 导出未删除文章，支持 `json`、`csv`、`markdown`
 
 ## 安装
@@ -136,15 +136,16 @@ weoa-cli auth login
 
 - 接口返回 `is_deleted: true` 的文章会被跳过
 - 本地列表只查询 `is_deleted = 0` 的记录
-- API 列表会过滤删除记录，并按 `appmsgid` 去重
+- API 列表会过滤删除记录，并按 `appmsgid + URL` 去重
 
 同步策略：
 
 - 本地未删除文章数为 0 时，`publish sync` 执行首次全量同步
 - 本地已有未删除文章时，执行增量同步
-- 增量同步分页遍历，遇到本地已存在的历史 `appmsgid` 后停止
-- 同一次同步中刚插入后又遇到的重复 `appmsgid` 不会触发提前停止
-- SQLite 使用 `UNIQUE(appmsgid)` 和 `INSERT OR IGNORE` 保证本地去重
+- 增量同步分页遍历，遇到本地已存在的历史 `appmsgid + URL` 后停止
+- 同一次同步中刚插入后又遇到的重复 `appmsgid + URL` 不会触发提前停止
+- SQLite 使用 `UNIQUE(appmsgid, url)` 和 `INSERT OR IGNORE` 保证本地去重
+- 从旧版单字段唯一键迁移后会自动执行一次全量同步，补回同一 `appmsgid` 下的多篇推文
 
 ### 本地存储
 
@@ -154,7 +155,7 @@ weoa-cli auth login
 └── cache.db          # SQLite 文章索引
 ```
 
-`articles` 表以 `appmsgid` 为唯一键，存储标题、URL、发布时间、封面、摘要、阅读数、点赞数、删除状态等。`publish list` 默认读取本地 SQLite，并按 `appmsgid` 倒序展示，因此日常查询无需联网；需要查看微信后台实时数据时使用 `--remote`。`publish export` 从本地 SQLite 导出未删除文章，用于分享或后续处理。
+`articles` 表以 `appmsgid + URL` 为联合唯一键，存储标题、URL、发布时间、封面、摘要、阅读数、点赞数、删除状态等。`publish list` 默认读取本地 SQLite，并按 `appmsgid` 倒序展示，因此日常查询无需联网；需要查看微信后台实时数据时使用 `--remote`。`publish export` 从本地 SQLite 导出未删除文章，用于分享或后续处理。
 
 ## 依赖
 

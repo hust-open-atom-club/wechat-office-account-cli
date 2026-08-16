@@ -44,7 +44,7 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-// InsertArticle inserts an article if it doesn't already exist (by appmsgid).
+// InsertArticle inserts an article if it doesn't already exist (by appmsgid and URL).
 // Returns true if the article was newly inserted.
 func (s *Store) InsertArticle(a publish.Article) (bool, error) {
 	result, err := s.db.Exec(
@@ -60,14 +60,37 @@ func (s *Store) InsertArticle(a publish.Article) (bool, error) {
 	return n > 0, nil
 }
 
-// HasAppMsgID returns true if the appmsgid is already in the database.
-func (s *Store) HasAppMsgID(appMsgID int64) (bool, error) {
+// HasArticle returns true if the appmsgid and URL pair is already in the database.
+func (s *Store) HasArticle(appMsgID int64, url string) (bool, error) {
 	var exists bool
-	err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM articles WHERE appmsgid = ?)", appMsgID).Scan(&exists)
+	err := s.db.QueryRow(
+		"SELECT EXISTS(SELECT 1 FROM articles WHERE appmsgid = ? AND url = ?)",
+		appMsgID, url,
+	).Scan(&exists)
 	if err != nil {
-		return false, fmt.Errorf("check appmsgid: %w", err)
+		return false, fmt.Errorf("check article identity: %w", err)
 	}
 	return exists, nil
+}
+
+// NeedsFullSync reports whether a schema migration requires a one-time full
+// synchronization to backfill articles previously hidden by the old unique key.
+func (s *Store) NeedsFullSync() (bool, error) {
+	var value int
+	err := s.db.QueryRow("SELECT value FROM sync_state WHERE key = 'needs_full_sync'").Scan(&value)
+	if err != nil {
+		return false, fmt.Errorf("read full sync state: %w", err)
+	}
+	return value != 0, nil
+}
+
+// MarkFullSyncComplete clears the one-time full synchronization marker.
+func (s *Store) MarkFullSyncComplete() error {
+	_, err := s.db.Exec("UPDATE sync_state SET value = 0 WHERE key = 'needs_full_sync'")
+	if err != nil {
+		return fmt.Errorf("mark full sync complete: %w", err)
+	}
+	return nil
 }
 
 // ArticleCount returns the total number of articles in the database.
@@ -224,7 +247,53 @@ func scanArticles(rows *sql.Rows) ([]publish.Article, error) {
 }
 
 func migrate(db *sql.DB) error {
-	_, err := db.Exec(`
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin schema migration: %w", err)
+	}
+	defer tx.Rollback()
+
+	var schemaVersion int
+	if err := tx.QueryRow("PRAGMA user_version").Scan(&schemaVersion); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+
+	var articlesExist bool
+	if err := tx.QueryRow(
+		"SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'articles')",
+	).Scan(&articlesExist); err != nil {
+		return fmt.Errorf("check articles table: %w", err)
+	}
+
+	if articlesExist && schemaVersion < 1 {
+		if _, err := tx.Exec(`
+			CREATE TABLE articles_new (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				appmsgid INTEGER NOT NULL,
+				publish_id INTEGER NOT NULL,
+				title TEXT NOT NULL,
+				url TEXT NOT NULL,
+				publish_time INTEGER NOT NULL,
+				cover TEXT,
+				digest TEXT,
+				read_num INTEGER DEFAULT 0,
+				like_num INTEGER DEFAULT 0,
+				is_deleted INTEGER DEFAULT 0,
+				synced_at INTEGER NOT NULL,
+				UNIQUE(appmsgid, url)
+			);
+			INSERT OR IGNORE INTO articles_new
+				(id, appmsgid, publish_id, title, url, publish_time, cover, digest, read_num, like_num, is_deleted, synced_at)
+			SELECT id, appmsgid, publish_id, title, url, publish_time, cover, digest, read_num, like_num, is_deleted, synced_at
+			FROM articles;
+			DROP TABLE articles;
+			ALTER TABLE articles_new RENAME TO articles;
+		`); err != nil {
+			return fmt.Errorf("migrate article identity: %w", err)
+		}
+	}
+
+	if _, err := tx.Exec(`
 		CREATE TABLE IF NOT EXISTS articles (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			appmsgid INTEGER NOT NULL,
@@ -238,9 +307,29 @@ func migrate(db *sql.DB) error {
 			like_num INTEGER DEFAULT 0,
 			is_deleted INTEGER DEFAULT 0,
 			synced_at INTEGER NOT NULL,
-			UNIQUE(appmsgid)
+			UNIQUE(appmsgid, url)
 		);
 		CREATE INDEX IF NOT EXISTS idx_articles_appmsgid ON articles(appmsgid DESC);
-	`)
-	return err
+		CREATE TABLE IF NOT EXISTS sync_state (
+			key TEXT PRIMARY KEY,
+			value INTEGER NOT NULL
+		);
+		INSERT OR IGNORE INTO sync_state (key, value) VALUES ('needs_full_sync', 0);
+	`); err != nil {
+		return fmt.Errorf("create schema: %w", err)
+	}
+
+	if articlesExist && schemaVersion < 1 {
+		if _, err := tx.Exec("UPDATE sync_state SET value = 1 WHERE key = 'needs_full_sync'"); err != nil {
+			return fmt.Errorf("schedule full sync: %w", err)
+		}
+	}
+	if _, err := tx.Exec("PRAGMA user_version = 1"); err != nil {
+		return fmt.Errorf("write schema version: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit schema migration: %w", err)
+	}
+	return nil
 }

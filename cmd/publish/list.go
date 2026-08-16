@@ -139,12 +139,13 @@ func listFromDatabase() error {
 
 func filterDeletedArticles(articles []publish.Article) []publish.Article {
 	active := articles[:0]
-	seen := make(map[int64]bool)
+	seen := make(map[articleIdentity]bool)
 	for _, a := range articles {
-		if a.IsDeleted || seen[a.AppMsgID] {
+		identity := identityOf(a)
+		if a.IsDeleted || seen[identity] {
 			continue
 		}
-		seen[a.AppMsgID] = true
+		seen[identity] = true
 		active = append(active, a)
 	}
 	return active

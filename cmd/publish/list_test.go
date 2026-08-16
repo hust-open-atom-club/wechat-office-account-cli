@@ -8,18 +8,19 @@ import (
 
 func TestFilterDeletedArticles(t *testing.T) {
 	articles := []internalpublish.Article{
-		{AppMsgID: 1, Title: "Active"},
-		{AppMsgID: 2, Title: "Deleted", IsDeleted: true},
-		{AppMsgID: 1, Title: "Active duplicate"},
-		{AppMsgID: 3, Title: "Active 2"},
+		{AppMsgID: 1, URL: "primary-url", Title: "Active"},
+		{AppMsgID: 2, URL: "deleted-url", Title: "Deleted", IsDeleted: true},
+		{AppMsgID: 1, URL: "primary-url", Title: "Exact duplicate"},
+		{AppMsgID: 1, URL: "secondary-url", Title: "Same ID, different URL"},
+		{AppMsgID: 3, URL: "third-url", Title: "Active 2"},
 	}
 
 	filtered := filterDeletedArticles(articles)
-	if len(filtered) != 2 {
-		t.Fatalf("len(filtered) = %d, want 2", len(filtered))
+	if len(filtered) != 3 {
+		t.Fatalf("len(filtered) = %d, want 3", len(filtered))
 	}
-	if filtered[0].AppMsgID != 1 || filtered[1].AppMsgID != 3 {
-		t.Fatalf("filtered IDs = [%d, %d], want [1, 3]", filtered[0].AppMsgID, filtered[1].AppMsgID)
+	if filtered[0].URL != "primary-url" || filtered[1].URL != "secondary-url" || filtered[2].URL != "third-url" {
+		t.Fatalf("filtered URLs = [%q, %q, %q]", filtered[0].URL, filtered[1].URL, filtered[2].URL)
 	}
 }
 

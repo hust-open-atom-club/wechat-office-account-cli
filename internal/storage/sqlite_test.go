@@ -53,9 +53,9 @@ func TestStore_InsertAndHasArticle(t *testing.T) {
 		LikeNum:     3,
 	}
 
-	exists, err := store.HasAppMsgID(a.AppMsgID)
+	exists, err := store.HasArticle(a.AppMsgID, a.URL)
 	if err != nil {
-		t.Fatalf("HasAppMsgID: %v", err)
+		t.Fatalf("HasArticle: %v", err)
 	}
 	if exists {
 		t.Error("article should not exist before insert")
@@ -69,21 +69,121 @@ func TestStore_InsertAndHasArticle(t *testing.T) {
 		t.Error("InsertArticle should return true for new article")
 	}
 
-	exists, err = store.HasAppMsgID(a.AppMsgID)
+	exists, err = store.HasArticle(a.AppMsgID, a.URL)
 	if err != nil {
-		t.Fatalf("HasAppMsgID after insert: %v", err)
+		t.Fatalf("HasArticle after insert: %v", err)
 	}
 	if !exists {
 		t.Error("article should exist after insert")
 	}
 
-	// Insert again — should be ignored (UNIQUE on appmsgid)
+	// Insert again — should be ignored (UNIQUE on appmsgid and URL).
 	inserted, err = store.InsertArticle(a)
 	if err != nil {
 		t.Fatalf("InsertArticle duplicate: %v", err)
 	}
 	if inserted {
 		t.Error("InsertArticle should return false for duplicate article")
+	}
+}
+
+func TestStore_InsertArticle_AllowsSameAppMsgIDWithDifferentURLs(t *testing.T) {
+	store := testStore(t)
+
+	first := publish.Article{AppMsgID: 1001, Title: "Primary", URL: "primary-url"}
+	second := publish.Article{AppMsgID: 1001, Title: "Secondary", URL: "secondary-url"}
+	for _, article := range []publish.Article{first, second} {
+		inserted, err := store.InsertArticle(article)
+		if err != nil {
+			t.Fatalf("InsertArticle(%q): %v", article.URL, err)
+		}
+		if !inserted {
+			t.Fatalf("InsertArticle(%q) should insert distinct URL", article.URL)
+		}
+	}
+
+	count, err := store.ArticleCount()
+	if err != nil {
+		t.Fatalf("ArticleCount: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("ArticleCount = %d, want 2", count)
+	}
+}
+
+func TestMigrate_RebuildsLegacyUniqueKeyAndSchedulesFullSync(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open legacy db: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	_, err = db.Exec(`
+		CREATE TABLE articles (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			appmsgid INTEGER NOT NULL,
+			publish_id INTEGER NOT NULL,
+			title TEXT NOT NULL,
+			url TEXT NOT NULL,
+			publish_time INTEGER NOT NULL,
+			cover TEXT,
+			digest TEXT,
+			read_num INTEGER DEFAULT 0,
+			like_num INTEGER DEFAULT 0,
+			is_deleted INTEGER DEFAULT 0,
+			synced_at INTEGER NOT NULL,
+			UNIQUE(appmsgid)
+		);
+		INSERT INTO articles
+			(appmsgid, publish_id, title, url, publish_time, synced_at)
+		VALUES (1001, 60001, 'Primary', 'primary-url', 1700000000, 1700000001);
+	`)
+	if err != nil {
+		t.Fatalf("create legacy schema: %v", err)
+	}
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate legacy schema: %v", err)
+	}
+	store := &Store{db: db}
+
+	count, err := store.ArticleCount()
+	if err != nil {
+		t.Fatalf("ArticleCount after migration: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("ArticleCount after migration = %d, want 1", count)
+	}
+
+	inserted, err := store.InsertArticle(publish.Article{
+		AppMsgID: 1001,
+		Title:    "Secondary",
+		URL:      "secondary-url",
+	})
+	if err != nil {
+		t.Fatalf("insert same appmsgid with new URL: %v", err)
+	}
+	if !inserted {
+		t.Fatal("migrated schema should accept the same appmsgid with a different URL")
+	}
+
+	needsFullSync, err := store.NeedsFullSync()
+	if err != nil {
+		t.Fatalf("NeedsFullSync: %v", err)
+	}
+	if !needsFullSync {
+		t.Fatal("legacy migration should schedule a one-time full sync")
+	}
+	if err := store.MarkFullSyncComplete(); err != nil {
+		t.Fatalf("MarkFullSyncComplete: %v", err)
+	}
+	needsFullSync, err = store.NeedsFullSync()
+	if err != nil {
+		t.Fatalf("NeedsFullSync after completion: %v", err)
+	}
+	if needsFullSync {
+		t.Fatal("full sync marker should be cleared after completion")
 	}
 }
 
@@ -222,11 +322,11 @@ func TestStore_InsertArticle_FullFields(t *testing.T) {
 	}
 }
 
-func TestStore_HasAppMsgID_NotFound(t *testing.T) {
+func TestStore_HasArticle_NotFound(t *testing.T) {
 	store := testStore(t)
-	exists, err := store.HasAppMsgID(123456789)
+	exists, err := store.HasArticle(123456789, "missing-url")
 	if err != nil {
-		t.Fatalf("HasAppMsgID: %v", err)
+		t.Fatalf("HasArticle: %v", err)
 	}
 	if exists {
 		t.Error("should not exist for never-inserted ID")

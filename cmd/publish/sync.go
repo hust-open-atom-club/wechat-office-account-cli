@@ -45,60 +45,86 @@ func runSync(cmd *cobra.Command, args []string) error {
 	}
 	defer store.Close()
 
-	initialCount, err := store.ActiveArticleCount()
-	if err != nil {
-		return fmt.Errorf("count existing active articles: %w", err)
-	}
-	needsFullSync, err := store.NeedsFullSync()
-	if err != nil {
-		return fmt.Errorf("read sync state: %w", err)
-	}
-	fullSync := initialCount == 0 || needsFullSync
-
 	svc := publish.NewService(c)
-
 	fmt.Println("Syncing...")
-
-	newCount := 0
-	detectedCount := 0
-	deletedCount := 0
-	var syncErr error
-	seenThisRun := make(map[articleIdentity]bool)
-	_, err = svc.ListAll(func(articles []publish.Article) bool {
-		detectedCount += len(articles)
-		deletedCount += countDeletedArticles(articles)
-
-		stop, pageErr := syncArticlePage(store, articles, seenThisRun, func(a publish.Article) {
-			newCount++
-			fmt.Printf("+ %s\n", a.Title)
-		})
-		if pageErr != nil {
-			syncErr = pageErr
-		}
-		return shouldStopSync(fullSync, stop)
+	stats, err := syncArticles(store, svc, func(a publish.Article) {
+		fmt.Printf("+ %s\n", a.Title)
 	})
 	if err != nil {
-		return fmt.Errorf("sync: %w", err)
+		return err
 	}
-	if syncErr != nil {
-		return syncErr
-	}
-	if fullSync {
-		if err := store.MarkFullSyncComplete(); err != nil {
-			return err
-		}
-	}
-
-	fmt.Println()
 
 	total, err := store.ActiveArticleCount()
 	if err != nil {
 		return fmt.Errorf("count active articles: %w", err)
 	}
-	fmt.Printf("Done. Detected %d published records, %d deleted, %d new articles synced (total: %d).\n",
-		detectedCount, deletedCount, newCount, total)
-
+	fmt.Printf("\nDone. Detected %d published records, %d deleted, %d new articles synced (total: %d).\n",
+		stats.detected, stats.deleted, stats.inserted, total)
 	return nil
+}
+
+type syncStateStore interface {
+	syncStore
+	ActiveArticleCount() (int, error)
+	NeedsFullSync() (bool, error)
+	MarkFullSyncNeeded() error
+	MarkFullSyncComplete() error
+}
+
+type articleLister interface {
+	ListAll(func([]publish.Article) bool) ([]publish.Article, error)
+}
+
+type syncStats struct {
+	detected int
+	deleted  int
+	inserted int
+}
+
+func syncArticles(store syncStateStore, svc articleLister, onInsert func(publish.Article)) (syncStats, error) {
+	var stats syncStats
+	initialCount, err := store.ActiveArticleCount()
+	if err != nil {
+		return stats, fmt.Errorf("count existing active articles: %w", err)
+	}
+	needsFullSync, err := store.NeedsFullSync()
+	if err != nil {
+		return stats, fmt.Errorf("read sync state: %w", err)
+	}
+	fullSync := initialCount == 0 || needsFullSync
+	// Even an incremental run can insert a partial page before failing. Persist
+	// the marker before any writes so its retry traverses past cached articles.
+	if err := store.MarkFullSyncNeeded(); err != nil {
+		return stats, err
+	}
+
+	var syncErr error
+	seenThisRun := make(map[articleIdentity]bool)
+	_, err = svc.ListAll(func(articles []publish.Article) bool {
+		stats.detected += len(articles)
+		stats.deleted += countDeletedArticles(articles)
+		stop, pageErr := syncArticlePage(store, articles, seenThisRun, func(a publish.Article) {
+			stats.inserted++
+			if onInsert != nil {
+				onInsert(a)
+			}
+		})
+		if pageErr != nil {
+			syncErr = pageErr
+			return true
+		}
+		return shouldStopSync(fullSync, stop)
+	})
+	if syncErr != nil {
+		return stats, syncErr
+	}
+	if err != nil {
+		return stats, fmt.Errorf("sync: %w", err)
+	}
+	if err := store.MarkFullSyncComplete(); err != nil {
+		return stats, err
+	}
+	return stats, nil
 }
 
 func shouldStopSync(fullSync, pageStop bool) bool {

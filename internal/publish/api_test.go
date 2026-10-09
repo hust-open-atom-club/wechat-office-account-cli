@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -180,5 +181,57 @@ func TestService_List_EarlyStop(t *testing.T) {
 	}
 	if callCount != 1 {
 		t.Errorf("expected 1 API call, got %d", callCount)
+	}
+}
+
+func TestService_ListAll_NonArticlePageDoesNotEndPagination(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		switch r.URL.Query().Get("begin") {
+		case "0":
+			info, _ := json.Marshal(publishInfo{Type: 1, MsgID: 2})
+			fmt.Fprint(w, buildAPIResponse([]publishRecord{{PublishInfo: string(info)}}, 2))
+		case "10":
+			fmt.Fprint(w, buildAPIResponse([]publishRecord{makeRecord(1, 1, "older article", "u1")}, 2))
+		default:
+			fmt.Fprint(w, buildAPIResponse(nil, 2))
+		}
+	}))
+	defer server.Close()
+	articles, err := NewService(&mockClient{baseURL: server.URL}).ListAll(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 3 || len(articles) != 1 || articles[0].Title != "older article" {
+		t.Fatalf("pagination stopped at non-article page: calls=%d articles=%v", calls, articles)
+	}
+}
+
+func TestService_ListAll_MalformedPageReturnsError(t *testing.T) {
+	for _, mixed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("mixed=%v", mixed), func(t *testing.T) {
+			calls, callbacks := 0, 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if r.URL.Query().Get("begin") == "0" {
+					fmt.Fprint(w, buildAPIResponse([]publishRecord{makeRecord(2, 2, "good page", "u2")}, 3))
+					return
+				}
+				records := []publishRecord{{PublishInfo: "invalid json"}}
+				if mixed {
+					records = append(records, makeRecord(1, 1, "good record", "u1"))
+				}
+				fmt.Fprint(w, buildAPIResponse(records, 3))
+			}))
+			defer server.Close()
+			_, err := NewService(&mockClient{baseURL: server.URL}).ListAll(func([]Article) bool { callbacks++; return false })
+			if err == nil || !strings.Contains(err.Error(), "list page 10") || !strings.Contains(err.Error(), "record 0") {
+				t.Fatalf("expected page and record context, got %v", err)
+			}
+			if calls != 2 || callbacks != 1 {
+				t.Fatalf("malformed page must not be processed: calls=%d callbacks=%d", calls, callbacks)
+			}
+		})
 	}
 }

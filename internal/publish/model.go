@@ -85,26 +85,44 @@ type appMsgItem struct {
 
 // parseResponse decodes the actual API response into articles.
 func parseResponse(body []byte) ([]Article, int, error) {
-	var outer appmsgpublishResponse
-	if err := json.Unmarshal(body, &outer); err != nil {
+	page, articles, err := parseArticlePage(body)
+	if err != nil {
 		return nil, 0, err
 	}
+	return articles, page.TotalCount, nil
+}
+
+// parseArticlePage retains raw publish records so a page without article items
+// is not mistaken for the end of pagination.
+func parseArticlePage(body []byte) (*publishPage, []Article, error) {
+	var outer appmsgpublishResponse
+	if err := json.Unmarshal(body, &outer); err != nil {
+		return nil, nil, err
+	}
 	if outer.BaseResp.Ret != 0 {
-		return nil, 0, fmt.Errorf("wechat api error %d: %s", outer.BaseResp.Ret, outer.BaseResp.ErrMsg)
+		return nil, nil, fmt.Errorf("wechat api error %d: %s", outer.BaseResp.Ret, outer.BaseResp.ErrMsg)
 	}
 
 	// Decode the first layer of JSON-string: publish_page
-	var page publishPage
+	var page *publishPage
 	if err := json.Unmarshal([]byte(outer.PublishPage), &page); err != nil {
-		return nil, 0, err
+		return nil, nil, err
+	}
+
+	if page == nil {
+		return nil, nil, fmt.Errorf("publish_page is null")
 	}
 
 	articles := make([]Article, 0)
-	for _, record := range page.PublishList {
+	for index, record := range page.PublishList {
 		// Decode the second layer of JSON-string: publish_info
-		var info publishInfo
+		var info *publishInfo
 		if err := json.Unmarshal([]byte(record.PublishInfo), &info); err != nil {
-			continue // Skip malformed records
+			return nil, nil, fmt.Errorf("decode publish_info at record %d: %w", index, err)
+		}
+
+		if info == nil {
+			return nil, nil, fmt.Errorf("publish_info at record %d is null", index)
 		}
 
 		for _, item := range info.AppMsgInfo {
@@ -123,5 +141,5 @@ func parseResponse(body []byte) ([]Article, int, error) {
 		}
 	}
 
-	return articles, page.TotalCount, nil
+	return page, articles, nil
 }

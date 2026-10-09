@@ -437,3 +437,48 @@ func articleIDs(articles []publish.Article) []int64 {
 	}
 	return ids
 }
+
+func TestStore_FullSyncMarkerSurvivesReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "retry.db")
+	store, err := openTestDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkFullSyncNeeded(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.InsertArticle(publish.Article{AppMsgID: 100, URL: "u100", Title: "partial sync"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Reopen directly: openTestDB deliberately removes an existing database.
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	store = &Store{db: db}
+	pending, err := store.NeedsFullSync()
+	if err != nil || !pending {
+		t.Fatalf("retry marker after reopen=%v, error=%v", pending, err)
+	}
+	count, err := store.ActiveArticleCount()
+	if err != nil || count != 1 {
+		t.Fatalf("persisted articles=%d, error=%v", count, err)
+	}
+	if err := store.MarkFullSyncComplete(); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	pending, err = store.NeedsFullSync()
+	if err != nil || pending {
+		t.Fatalf("completed marker=%v, error=%v", pending, err)
+	}
+}

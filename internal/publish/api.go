@@ -29,9 +29,10 @@ func NewService(c PublishClient) *Service {
 
 // ListResult holds the result of a List call.
 type ListResult struct {
-	Articles   []Article `json:"articles"`
-	TotalCount int       `json:"total_count"`
-	Begin      int       `json:"begin"`
+	Articles    []Article `json:"articles"`
+	TotalCount  int       `json:"total_count"`
+	Begin       int       `json:"begin"`
+	RecordCount int       `json:"-"` // Number of raw publish records, before article extraction.
 }
 
 // List fetches a page of published articles.
@@ -52,15 +53,16 @@ func (s *Service) List(begin, count int) (*ListResult, error) {
 		return nil, fmt.Errorf("appmsgpublish returned status %d: %s", resp.StatusCode(), resp.String())
 	}
 
-	articles, totalCount, err := parseResponse(resp.Body())
+	page, articles, err := parseArticlePage(resp.Body())
 	if err != nil {
 		return nil, fmt.Errorf("parse response: %w", err)
 	}
 
 	return &ListResult{
-		Articles:   articles,
-		TotalCount: totalCount,
-		Begin:      begin,
+		Articles:    articles,
+		TotalCount:  page.TotalCount,
+		RecordCount: len(page.PublishList),
+		Begin:       begin,
 	}, nil
 }
 
@@ -76,7 +78,7 @@ func (s *Service) ListAll(shouldStop func([]Article) bool) ([]Article, error) {
 			return nil, fmt.Errorf("list page %d: %w", begin, err)
 		}
 
-		if len(result.Articles) == 0 {
+		if result.RecordCount == 0 {
 			break
 		}
 

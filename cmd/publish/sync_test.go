@@ -1,7 +1,10 @@
 package publish
 
 import (
+	"encoding/json"
 	"errors"
+	"github.com/go-resty/resty/v2"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -190,5 +193,195 @@ func TestCountDeletedArticles(t *testing.T) {
 
 	if got := countDeletedArticles(articles); got != 2 {
 		t.Fatalf("countDeletedArticles = %d, want 2", got)
+	}
+}
+
+type fakeSyncStateStore struct {
+	fakeSyncStore
+	pending     bool
+	markErr     error
+	completeErr error
+}
+
+var _ syncStateStore = (*fakeSyncStateStore)(nil)
+
+func (s *fakeSyncStateStore) ActiveArticleCount() (int, error) { return len(s.existing), nil }
+func (s *fakeSyncStateStore) NeedsFullSync() (bool, error)     { return s.pending, nil }
+func (s *fakeSyncStateStore) MarkFullSyncNeeded() error {
+	if s.markErr != nil {
+		return s.markErr
+	}
+	s.pending = true
+	return nil
+}
+func (s *fakeSyncStateStore) MarkFullSyncComplete() error {
+	if s.completeErr != nil {
+		return s.completeErr
+	}
+	s.pending = false
+	return nil
+}
+func (s *fakeSyncStateStore) InsertArticle(a internalpublish.Article) (bool, error) {
+	if !s.pending {
+		return false, errors.New("write before retry marker")
+	}
+	inserted, err := s.fakeSyncStore.InsertArticle(a)
+	if inserted {
+		s.existing[identityOf(a)] = true
+	}
+	return inserted, err
+}
+
+type fakeArticleLister struct {
+	pages  [][]internalpublish.Article
+	endErr error
+	calls  int
+}
+
+var _ articleLister = (*fakeArticleLister)(nil)
+
+func (l *fakeArticleLister) ListAll(stop func([]internalpublish.Article) bool) ([]internalpublish.Article, error) {
+	var all []internalpublish.Article
+	for _, page := range l.pages {
+		l.calls++
+		all = append(all, page...)
+		if stop(page) {
+			return all, nil
+		}
+	}
+	return all, l.endErr
+}
+
+func TestSyncArticlesFailedRunRetriesAllPages(t *testing.T) {
+	for _, incremental := range []bool{false, true} {
+		t.Run(map[bool]string{false: "first sync", true: "incremental sync"}[incremental], func(t *testing.T) {
+			store := &fakeSyncStateStore{fakeSyncStore: fakeSyncStore{existing: map[articleIdentity]bool{}}}
+			if incremental {
+				store.existing[articleIdentity{appMsgID: 1, url: "old"}] = true
+			}
+			firstPage := []internalpublish.Article{{AppMsgID: 100, URL: "new"}}
+			failed := &fakeArticleLister{pages: [][]internalpublish.Article{firstPage}, endErr: errors.New("page request failed")}
+			if _, err := syncArticles(store, failed, nil); err == nil {
+				t.Fatal("expected request failure")
+			}
+			if !store.pending {
+				t.Fatal("failed sync must retain retry marker")
+			}
+			if !store.existing[identityOf(firstPage[0])] {
+				t.Fatal("expected partially persisted first page")
+			}
+			retry := &fakeArticleLister{pages: [][]internalpublish.Article{firstPage, {{AppMsgID: 90, URL: "older missing"}}}}
+			stats, err := syncArticles(store, retry, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if retry.calls != 2 || stats.inserted != 1 || !store.existing[articleIdentity{appMsgID: 90, url: "older missing"}] {
+				t.Fatalf("retry did not recover older page: calls=%d stats=%+v", retry.calls, stats)
+			}
+			if store.pending {
+				t.Fatal("successful full retry must clear marker")
+			}
+		})
+	}
+}
+
+func TestSyncArticlesIncrementalStopsAfterKnownPage(t *testing.T) {
+	store := &fakeSyncStateStore{fakeSyncStore: fakeSyncStore{existing: map[articleIdentity]bool{{appMsgID: 100, url: "known"}: true}}}
+	lister := &fakeArticleLister{pages: [][]internalpublish.Article{{{AppMsgID: 100, URL: "known"}}, {{AppMsgID: 90, URL: "older"}}}}
+	if _, err := syncArticles(store, lister, nil); err != nil {
+		t.Fatal(err)
+	}
+	if lister.calls != 1 || store.pending {
+		t.Fatalf("successful incremental sync: calls=%d pending=%v", lister.calls, store.pending)
+	}
+}
+
+func TestSyncArticlesStorageFailureStopsFullSync(t *testing.T) {
+	store := &fakeSyncStateStore{fakeSyncStore: fakeSyncStore{existing: map[articleIdentity]bool{}, insertErr: errors.New("disk full")}}
+	lister := &fakeArticleLister{pages: [][]internalpublish.Article{{{AppMsgID: 100, URL: "new"}}, {{AppMsgID: 90, URL: "older"}}}}
+	_, err := syncArticles(store, lister, nil)
+	if err == nil || !strings.Contains(err.Error(), "disk full") {
+		t.Fatalf("expected insert failure, got %v", err)
+	}
+	if lister.calls != 1 || !store.pending {
+		t.Fatalf("failed full sync: calls=%d pending=%v", lister.calls, store.pending)
+	}
+}
+
+func TestSyncArticlesMarkerErrors(t *testing.T) {
+	for _, complete := range []bool{false, true} {
+		t.Run(map[bool]string{false: "before writes", true: "completion"}[complete], func(t *testing.T) {
+			store := &fakeSyncStateStore{fakeSyncStore: fakeSyncStore{existing: map[articleIdentity]bool{}}}
+			if complete {
+				store.completeErr = errors.New("state write failed")
+			} else {
+				store.markErr = errors.New("state write failed")
+			}
+			lister := &fakeArticleLister{pages: [][]internalpublish.Article{{{AppMsgID: 100, URL: "new"}}}}
+			if _, err := syncArticles(store, lister, nil); err == nil {
+				t.Fatal("expected marker write error")
+			}
+			if complete && !store.pending {
+				t.Fatal("completion failure must retain retry marker")
+			}
+			if !complete && lister.calls != 0 {
+				t.Fatal("must not fetch articles without durable retry marker")
+			}
+		})
+	}
+}
+
+type syncResponseClient struct{ malformed bool }
+
+var _ internalpublish.PublishClient = (*syncResponseClient)(nil)
+
+func (c *syncResponseClient) GetWithParams(_ string, params map[string]string) (*resty.Response, error) {
+	var records []map[string]string
+	switch params["begin"] {
+	case "0", "10":
+		id := int64(100)
+		if params["begin"] == "10" {
+			id = 90
+		}
+		info, err := json.Marshal(map[string]interface{}{
+			"msgid": id, "sent_info": map[string]int{"time": 1},
+			"appmsg_info": []map[string]interface{}{{"appmsgid": id, "content_url": "u" + params["begin"], "title": "article"}},
+		})
+		if err != nil {
+			return nil, err
+		}
+		if c.malformed && params["begin"] == "10" {
+			info = []byte("invalid json")
+		}
+		records = []map[string]string{{"publish_info": string(info)}}
+	}
+	page, err := json.Marshal(map[string]interface{}{"total_count": 2, "publish_list": records})
+	if err != nil {
+		return nil, err
+	}
+	body, err := json.Marshal(map[string]interface{}{"base_resp": map[string]int{"ret": 0}, "publish_page": string(page)})
+	if err != nil {
+		return nil, err
+	}
+	return (&resty.Response{RawResponse: &http.Response{StatusCode: 200}}).SetBody(body), nil
+}
+
+func TestSyncArticlesParseFailureRetainsMarkerAndRetryRecovers(t *testing.T) {
+	store := &fakeSyncStateStore{fakeSyncStore: fakeSyncStore{existing: map[articleIdentity]bool{}}}
+	client := &syncResponseClient{malformed: true}
+	service := internalpublish.NewService(client)
+	if _, err := syncArticles(store, service, nil); err == nil || !strings.Contains(err.Error(), "list page 10") {
+		t.Fatalf("expected second-page parse failure, got %v", err)
+	}
+	if !store.pending || len(store.existing) != 1 {
+		t.Fatalf("failed sync state: pending=%v cached=%d", store.pending, len(store.existing))
+	}
+	client.malformed = false
+	stats, err := syncArticles(store, service, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.pending || len(store.existing) != 2 || stats.inserted != 1 {
+		t.Fatalf("retry failed to recover article: pending=%v cached=%d stats=%+v", store.pending, len(store.existing), stats)
 	}
 }

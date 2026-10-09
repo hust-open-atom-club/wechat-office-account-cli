@@ -73,8 +73,8 @@ func (s *Store) HasArticle(appMsgID int64, url string) (bool, error) {
 	return exists, nil
 }
 
-// NeedsFullSync reports whether a schema migration requires a one-time full
-// synchronization to backfill articles previously hidden by the old unique key.
+// NeedsFullSync reports whether a migration or interrupted synchronization
+// requires a full traversal to recover missing articles.
 func (s *Store) NeedsFullSync() (bool, error) {
 	var value int
 	err := s.db.QueryRow("SELECT value FROM sync_state WHERE key = 'needs_full_sync'").Scan(&value)
@@ -84,7 +84,16 @@ func (s *Store) NeedsFullSync() (bool, error) {
 	return value != 0, nil
 }
 
-// MarkFullSyncComplete clears the one-time full synchronization marker.
+// MarkFullSyncNeeded persists retry state before a sync can partially write articles.
+func (s *Store) MarkFullSyncNeeded() error {
+	_, err := s.db.Exec("UPDATE sync_state SET value = 1 WHERE key = 'needs_full_sync'")
+	if err != nil {
+		return fmt.Errorf("mark full sync needed: %w", err)
+	}
+	return nil
+}
+
+// MarkFullSyncComplete clears the retry marker after successful synchronization.
 func (s *Store) MarkFullSyncComplete() error {
 	_, err := s.db.Exec("UPDATE sync_state SET value = 0 WHERE key = 'needs_full_sync'")
 	if err != nil {

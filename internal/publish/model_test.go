@@ -2,6 +2,7 @@ package publish
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -157,22 +158,16 @@ func TestParseResponse_BaseRespError(t *testing.T) {
 }
 
 func TestParseResponse_MalformedPublishInfo(t *testing.T) {
-	// publish_info contains invalid JSON — should be skipped gracefully
-	jsonData := `{
-		"base_resp": {"err_msg": "ok", "ret": 0},
-		"is_admin": true,
-		"publish_page": "{\"total_count\":2,\"publish_list\":[{\"publish_type\":101,\"publish_info\":\"{\\\"type\\\":9,\\\"msgid\\\":1,\\\"sent_info\\\":{\\\"time\\\":1},\\\"appmsg_info\\\":[{\\\"appmsgid\\\":1,\\\"content_url\\\":\\\"u1\\\",\\\"title\\\":\\\"Good\\\",\\\"is_deleted\\\":false,\\\"read_num\\\":0,\\\"like_num\\\":0}]}\"},{\"publish_type\":101,\"publish_info\":\"invalid json here\"}]}"
-	}`
-
-	articles, total, err := parseResponse([]byte(jsonData))
-	if err != nil {
-		t.Fatalf("parseResponse should not fail on malformed records: %v", err)
+	records := []publishRecord{
+		makeRecord(1, 1, "Good", "u1"),
+		{PublishInfo: "invalid json here"},
 	}
-	if total != 2 {
-		t.Errorf("total = %d", total)
+	articles, _, err := parseResponse([]byte(buildAPIResponse(records, 2)))
+	if err == nil || !strings.Contains(err.Error(), "record 1") {
+		t.Fatalf("expected contextual error for malformed record, got %v", err)
 	}
-	if len(articles) != 1 {
-		t.Errorf("expected 1 article (1 skipped), got %d", len(articles))
+	if articles != nil {
+		t.Fatal("malformed page must not return partially parsed articles")
 	}
 }
 
@@ -211,5 +206,18 @@ func TestArticle_JSONRoundTrip(t *testing.T) {
 	}
 	if b.LikeNum != a.LikeNum {
 		t.Errorf("LikeNum: got %d, want %d", b.LikeNum, a.LikeNum)
+	}
+}
+
+func TestParseResponse_NullLayersReturnError(t *testing.T) {
+	for _, test := range []struct{ name, body string }{
+		{"page", `{"base_resp":{"ret":0},"publish_page":"null"}`},
+		{"record", buildAPIResponse([]publishRecord{{PublishInfo: "null"}}, 1)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, _, err := parseResponse([]byte(test.body)); err == nil {
+				t.Fatal("null JSON must not be accepted as an empty page or record")
+			}
+		})
 	}
 }

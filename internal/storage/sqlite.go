@@ -134,7 +134,13 @@ func (s *Store) ListActiveArticles(limit int) ([]publish.Article, error) {
 	return s.listArticles(limit, true)
 }
 
-// SearchActiveArticles returns non-deleted articles matching query in title, digest, or URL.
+const activeArticleSearch = `is_deleted = 0 AND (
+	title LIKE ? ESCAPE '\' OR digest LIKE ? ESCAPE '\' OR url LIKE ? ESCAPE '\'
+)`
+
+var likeLiteralEscaper = strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`)
+
+// SearchActiveArticles returns non-deleted articles whose title, digest, or URL contains query literally.
 // If limit <= 0, returns all matching active articles without limit.
 func (s *Store) SearchActiveArticles(query string, limit int) ([]publish.Article, error) {
 	pattern, ok := searchPattern(query)
@@ -148,7 +154,7 @@ func (s *Store) SearchActiveArticles(query string, limit int) ([]publish.Article
 		rows, err = s.db.Query(
 			`SELECT appmsgid, publish_id, title, url, publish_time, cover, digest, read_num, like_num, is_deleted
 			 FROM articles
-			 WHERE is_deleted = 0 AND (title LIKE ? OR digest LIKE ? OR url LIKE ?)
+			 WHERE `+activeArticleSearch+`
 			 ORDER BY appmsgid DESC LIMIT ?`,
 			pattern, pattern, pattern, limit,
 		)
@@ -156,7 +162,7 @@ func (s *Store) SearchActiveArticles(query string, limit int) ([]publish.Article
 		rows, err = s.db.Query(
 			`SELECT appmsgid, publish_id, title, url, publish_time, cover, digest, read_num, like_num, is_deleted
 			 FROM articles
-			 WHERE is_deleted = 0 AND (title LIKE ? OR digest LIKE ? OR url LIKE ?)
+			 WHERE `+activeArticleSearch+`
 			 ORDER BY appmsgid DESC`,
 			pattern, pattern, pattern,
 		)
@@ -176,8 +182,7 @@ func (s *Store) SearchActiveArticleCount(query string) (int, error) {
 
 	var count int
 	err := s.db.QueryRow(
-		`SELECT COUNT(*) FROM articles
-		 WHERE is_deleted = 0 AND (title LIKE ? OR digest LIKE ? OR url LIKE ?)`,
+		`SELECT COUNT(*) FROM articles WHERE `+activeArticleSearch,
 		pattern, pattern, pattern,
 	).Scan(&count)
 	if err != nil {
@@ -191,7 +196,7 @@ func searchPattern(query string) (string, bool) {
 	if query == "" {
 		return "", false
 	}
-	return "%" + query + "%", true
+	return "%" + likeLiteralEscaper.Replace(query) + "%", true
 }
 
 func (s *Store) listArticles(limit int, activeOnly bool) ([]publish.Article, error) {

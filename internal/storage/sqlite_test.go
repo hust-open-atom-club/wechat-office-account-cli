@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -427,6 +428,57 @@ func TestStore_SearchActiveArticles(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("SearchActiveArticleCount = %d, want 1", count)
+	}
+}
+
+func TestStore_SearchActiveArticlesLiteral(t *testing.T) {
+	store := testStore(t)
+	articles := []publish.Article{
+		{AppMsgID: 1, Title: "进度 100%", Digest: `Saved in C:\cache`, URL: "https://example.com/article_one"},
+		{AppMsgID: 2, Title: "进度 1000", Digest: "Saved in C:cache", URL: "https://example.com/articleXone"},
+		{AppMsgID: 3, Title: "进度 100%", Digest: `Saved in C:\cache`, URL: "https://example.com/deleted_article_one", IsDeleted: true},
+	}
+	for _, article := range articles {
+		if inserted, err := store.InsertArticle(article); err != nil || !inserted {
+			t.Fatalf("insert article %d: inserted=%v, err=%v", article.AppMsgID, inserted, err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+		want  []int64
+	}{
+		{name: "ordinary substring", query: "进度", want: []int64{2, 1}},
+		{name: "percent in title", query: "100%", want: []int64{1}},
+		{name: "underscore in URL", query: "article_one", want: []int64{1}},
+		{name: "backslash in digest", query: `C:\cache`, want: []int64{1}},
+		{name: "trailing backslash", query: `C:\`, want: []int64{1}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, limit := range []int{0, 1} {
+				want := tt.want
+				if limit > 0 && limit < len(want) {
+					want = want[:limit]
+				}
+				result, err := store.SearchActiveArticles(tt.query, limit)
+				if err != nil {
+					t.Fatalf("search with limit %d: %v", limit, err)
+				}
+				if got := articleIDs(result); !slices.Equal(got, want) {
+					t.Errorf("search with limit %d returned IDs %v, want %v", limit, got, want)
+				}
+			}
+
+			count, err := store.SearchActiveArticleCount(tt.query)
+			if err != nil {
+				t.Fatalf("count search articles: %v", err)
+			}
+			if count != len(tt.want) {
+				t.Errorf("search count = %d, want %d", count, len(tt.want))
+			}
+		})
 	}
 }
 

@@ -12,6 +12,7 @@ func NewLogoutCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout",
 		Short: "Log out and clear saved session",
+		Args:  cobra.NoArgs,
 		RunE:  runLogout,
 	}
 }

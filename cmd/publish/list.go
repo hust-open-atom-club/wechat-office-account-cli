@@ -28,6 +28,7 @@ func NewListCmd() *cobra.Command {
 
 By default, reads from the local database.
 Use --remote to fetch from the WeChat backend.`,
+		Args: cobra.NoArgs,
 		RunE: runList,
 	}
 

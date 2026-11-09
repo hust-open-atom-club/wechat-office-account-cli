@@ -13,6 +13,7 @@ var whoamiCmd = &cobra.Command{
 	Use:   "whoami",
 	Short: "Show current logged-in account info",
 	Long:  `Fetches the WeChat Official Account settings page and displays detailed account profile information.`,
+	Args:  cobra.NoArgs,
 	RunE:  runWhoami,
 }
 

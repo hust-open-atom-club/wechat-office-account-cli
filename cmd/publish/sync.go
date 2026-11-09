@@ -24,6 +24,7 @@ func NewSyncCmd() *cobra.Command {
 
 On first run, it fetches and stores all articles.
 On subsequent runs, it only syncs new articles (incremental sync).`,
+		Args: cobra.NoArgs,
 		RunE: runSync,
 	}
 }

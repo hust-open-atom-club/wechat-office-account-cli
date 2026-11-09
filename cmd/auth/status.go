@@ -14,7 +14,8 @@ func NewStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Show login status",
 		Long:  `Checks whether a saved session exists and optionally verifies it against the backend.`,
-		RunE: runStatus,
+		Args:  cobra.NoArgs,
+		RunE:  runStatus,
 	}
 }
 

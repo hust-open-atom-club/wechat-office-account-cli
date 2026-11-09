@@ -19,6 +19,7 @@ func NewLoginCmd() *cobra.Command {
 		Long: `Opens a browser window to mp.weixin.qq.com by default.
 Use --qr to print the login QR code directly in the terminal.
 Session (cookies + token) is saved to ~/.config/weoa-cli/session.json.`,
+		Args: cobra.NoArgs,
 		RunE: runLogin,
 	}
 	cmd.Flags().BoolVar(&loginQR, "qr", false, "Print the login QR code in the terminal without opening a browser window")
